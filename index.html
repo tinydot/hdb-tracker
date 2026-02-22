@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HDB Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+:root {
+  --bg:#f5f6f8; --panel:#ffffff; --border:#e2e5eb;
+  --text:#1a1f2e; --muted:#8a93a8; --accent:#00b37a;
+  --resale:#1a7fe0; --bto:#8b44d4;
+  --drop:#00b37a; --rise:#e02849; --delist:#d45f00; --relist:#b08800;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+
+/* ── HEADER ── */
+header{display:flex;align-items:center;justify-content:space-between;padding:9px 18px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0;gap:12px;}
+.logo{font-family:'DM Mono',monospace;font-size:12px;letter-spacing:.12em;color:var(--accent);white-space:nowrap;}
+.logo span{color:var(--muted);}
+.hstats{display:flex;gap:16px;flex-shrink:0;}
+.hstat{display:flex;flex-direction:column;align-items:flex-end;}
+.hstat-val{font-family:'DM Mono',monospace;font-size:14px;font-weight:500;}
+.hstat-label{font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;}
+.header-actions{display:flex;gap:6px;flex-shrink:0;}
+.hbtn{padding:5px 11px;border-radius:5px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:11px;font-family:'DM Sans',sans-serif;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap;}
+.hbtn:hover{border-color:var(--accent);color:var(--accent);}
+.hbtn.danger:hover{border-color:#ff2d55;color:#ff2d55;}
+
+/* ── TABS ── */
+.tab-bar{display:flex;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0;}
+.tab{padding:8px 18px;font-size:12px;font-weight:600;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;transition:all .15s;user-select:none;}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+.tab .badge{display:inline-block;margin-left:5px;padding:1px 5px;border-radius:10px;font-size:10px;font-family:'DM Mono',monospace;}
+.badge-drop{background:#d4f5e9;color:var(--drop);}
+.badge-delist{background:#fde8d6;color:var(--delist);}
+.badge-relist{background:#fef7d0;color:var(--relist);}
+.badge-all{background:#daeeff;color:var(--resale);}
+
+/* ── MAIN ── */
+.main{display:flex;flex:1;overflow:hidden;}
+.sidebar{width:340px;flex-shrink:0;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
+.sidebar-top{padding:11px 13px;border-bottom:1px solid var(--border);}
+.sidebar-top h3{font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:7px;font-family:'DM Mono',monospace;}
+textarea{width:100%;height:75px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:'DM Mono',monospace;font-size:10px;padding:7px;resize:none;outline:none;transition:border-color .2s;}
+textarea:focus{border-color:var(--accent);}
+.btn-row{display:flex;gap:5px;margin-top:6px;}
+button{flex:1;padding:6px 8px;border-radius:5px;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;transition:opacity .2s;white-space:nowrap;}
+button:hover{opacity:.82;}
+.btn-primary{background:var(--accent);color:#000;}
+.btn-secondary{background:var(--border);color:var(--text);}
+.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--muted);}
+
+.filter-bar{padding:9px 13px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px;}
+.filter-label{font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.1em;margin-bottom:3px;}
+.chips{display:flex;gap:4px;flex-wrap:wrap;}
+.chip{padding:3px 8px;border-radius:20px;font-size:10px;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--muted);transition:all .15s;font-family:'DM Sans',sans-serif;}
+.chip.active{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600;}
+.chip.active-r{background:var(--resale);color:#000;border-color:var(--resale);font-weight:600;}
+.chip.active-b{background:var(--bto);color:#000;border-color:var(--bto);font-weight:600;}
+.range-row{display:flex;align-items:center;gap:8px;}
+input[type=range]{flex:1;accent-color:var(--resale);}
+.range-val{font-family:'DM Mono',monospace;font-size:10px;color:var(--resale);min-width:60px;text-align:right;}
+
+.listing-list{flex:1;overflow-y:auto;padding:7px;}
+.listing-list::-webkit-scrollbar{width:3px;}
+.listing-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
+
+/* ── CARDS ── */
+.listing-card{padding:9px 11px;border-radius:6px;border:1px solid var(--border);margin-bottom:5px;cursor:pointer;transition:all .15s;background:var(--bg);position:relative;}
+.listing-card:hover{border-color:#c5cad6;background:#eef0f4;}
+.listing-card.active{border-color:var(--accent)!important;background:#eef0f4;}
+.card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;}
+.card-price{font-family:'DM Mono',monospace;font-size:13px;font-weight:500;}
+.card-badges{display:flex;gap:4px;align-items:center;flex-wrap:wrap;justify-content:flex-end;}
+.type-badge{font-size:9px;padding:2px 6px;border-radius:3px;font-weight:700;}
+.badge-resale{background:#daeeff;color:var(--resale);}
+.badge-bto{background:#f0e6fd;color:var(--bto);}
+.change-badge{font-size:9px;padding:2px 6px;border-radius:3px;font-weight:700;font-family:'DM Mono',monospace;}
+.cb-drop{background:#d4f5e9;color:var(--drop);}
+.cb-rise{background:#fdd6dc;color:var(--rise);}
+.cb-delist{background:#fde8d6;color:var(--delist);}
+.cb-relist{background:#fef7d0;color:var(--relist);}
+.cb-new{background:#daeeff;color:var(--resale);}
+.card-addr{font-size:10px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.card-meta{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;}
+.card-meta span{font-size:9px;font-family:'DM Mono',monospace;color:var(--muted);background:#eaecf1;padding:2px 5px;border-radius:3px;}
+.empty-state{text-align:center;padding:32px 14px;color:var(--muted);font-size:11px;line-height:1.8;}
+
+/* ── HISTORY PANEL ── */
+.history-entry{padding:9px 11px;border-radius:6px;border:1px solid var(--border);margin-bottom:5px;background:var(--bg);}
+.he-top{display:flex;justify-content:space-between;align-items:center;gap:6px;}
+.he-addr{font-size:10px;color:var(--text);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.he-date{font-size:9px;font-family:'DM Mono',monospace;color:var(--muted);white-space:nowrap;}
+.he-prices{display:flex;gap:6px;margin-top:5px;align-items:center;flex-wrap:wrap;}
+.he-old{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);text-decoration:line-through;}
+.he-arrow{color:var(--muted);font-size:10px;}
+.he-new{font-family:'DM Mono',monospace;font-size:13px;font-weight:500;}
+.he-diff{font-family:'DM Mono',monospace;font-size:10px;padding:1px 5px;border-radius:3px;}
+
+/* ── MAP ── */
+.map-wrap{flex:1;position:relative;min-height:0;}
+#map{position:absolute;top:0;left:0;right:0;bottom:0;}
+.leaflet-container{background:#e8edf2;}
+.map-legend{position:absolute;bottom:16px;right:16px;z-index:1000;background:var(--panel);border:1px solid var(--border);border-radius:7px;padding:9px 13px;font-family:'DM Mono',monospace;font-size:10px;}
+.legend-title{color:var(--muted);margin-bottom:7px;text-transform:uppercase;letter-spacing:.1em;font-size:9px;}
+.legend-row{display:flex;align-items:center;gap:7px;margin-bottom:4px;color:var(--text);}
+.legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+.legend-sep{border-top:1px solid var(--border);margin:6px 0;}
+
+/* ── POPUPS ── */
+.leaflet-popup-content-wrapper{background:var(--panel);border:1px solid var(--border);border-radius:7px;color:var(--text);box-shadow:0 8px 30px rgba(0,0,0,.5);}
+.leaflet-popup-tip{background:var(--panel);}
+.leaflet-popup-content{margin:12px 14px;min-width:190px;}
+.popup-badge{display:inline-block;font-size:9px;padding:2px 7px;border-radius:3px;font-weight:700;font-family:'DM Mono',monospace;margin-bottom:5px;}
+.popup-price{font-family:'DM Mono',monospace;font-size:18px;font-weight:500;}
+.popup-addr{font-size:11px;color:var(--muted);margin:3px 0 8px;line-height:1.4;}
+.popup-grid{display:grid;grid-template-columns:1fr 1fr;gap:3px;}
+.popup-item{background:var(--bg);border-radius:4px;padding:4px 7px;}
+.popup-item-label{font-size:8px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;}
+.popup-item-val{font-size:11px;font-family:'DM Mono',monospace;margin-top:1px;}
+.popup-thumb{width:100%;height:140px;object-fit:cover;border-radius:5px;margin-bottom:9px;display:block;background:var(--bg);}
+.popup-thumb-wrap{position:relative;margin-bottom:9px;}
+.popup-thumb-wrap .popup-thumb-label{position:absolute;bottom:0;left:0;right:0;padding:5px 8px;background:linear-gradient(transparent,rgba(0,0,0,.7));font-size:9px;font-family:'DM Mono',monospace;color:#fff;border-radius:0 0 5px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.popup-history{margin-top:8px;border-top:1px solid var(--border);padding-top:8px;}
+.popup-history-title{font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px;}
+.popup-history-row{display:flex;justify-content:space-between;font-size:10px;font-family:'DM Mono',monospace;margin-bottom:3px;color:var(--muted);}
+.popup-history-row .ph-price{color:var(--text);}
+
+/* ── TOAST ── */
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:9px 16px;font-size:12px;font-family:'DM Mono',monospace;color:var(--text);z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none;white-space:nowrap;}
+.toast.show{opacity:1;}
+
+/* ── IMPORT SUMMARY MODAL ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:5000;display:none;align-items:center;justify-content:center;}
+.modal-overlay.show{display:flex;}
+.modal{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:22px 24px;width:360px;max-width:90vw;}
+.modal h2{font-size:14px;font-family:'DM Mono',monospace;color:var(--accent);margin-bottom:14px;letter-spacing:.06em;}
+.summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:16px;}
+.sg-item{background:var(--bg);border-radius:6px;padding:9px 11px;}
+.sg-val{font-family:'DM Mono',monospace;font-size:18px;font-weight:500;}
+.sg-label{font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;margin-top:2px;}
+.modal-close{width:100%;padding:8px;border-radius:6px;background:var(--accent);color:#000;border:none;font-weight:700;font-size:13px;cursor:pointer;font-family:'DM Sans',sans-serif;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">HDB<span>//</span>TRACKER</div>
+  <div class="hstats">
+    <div class="hstat"><span class="hstat-val" id="s-resale" style="color:var(--resale)">0</span><span class="hstat-label">Resale</span></div>
+    <div class="hstat"><span class="hstat-val" id="s-bto" style="color:var(--bto)">0</span><span class="hstat-label">BTO</span></div>
+    <div class="hstat"><span class="hstat-val" id="s-med">—</span><span class="hstat-label">Median</span></div>
+    <div class="hstat"><span class="hstat-val" id="s-low">—</span><span class="hstat-label">Lowest</span></div>
+  </div>
+  <div class="header-actions">
+    <button class="hbtn" onclick="exportDB()">⬇ Export DB</button>
+    <button class="hbtn" onclick="triggerImportDB()">⬆ Import DB</button>
+    <button class="hbtn danger" onclick="confirmClearDB()">✕ Clear DB</button>
+    <input type="file" id="db-file-input" accept=".json" style="display:none" onchange="importDBFile(this)">
+  </div>
+</header>
+
+<div class="tab-bar">
+  <div class="tab active" data-tab="map" onclick="switchTab(this)">Map</div>
+  <div class="tab" data-tab="changes" onclick="switchTab(this)">Changes <span class="badge badge-all" id="tab-changes-badge">0</span></div>
+  <div class="tab" data-tab="history" onclick="switchTab(this)">History</div>
+</div>
+
+<div class="main">
+  <div class="sidebar">
+    <div class="sidebar-top">
+      <h3>Paste Scraped JSON</h3>
+      <textarea id="data-input" placeholder="Paste your hdb.json array here..."></textarea>
+      <div class="btn-row">
+        <button class="btn-primary" onclick="importData()">Load + Save</button>
+        <button class="btn-secondary" onclick="loadSample()">Sample</button>
+        <button class="btn-ghost" onclick="clearView()">Clear View</button>
+      </div>
+    </div>
+
+    <div class="filter-bar">
+      <div>
+        <div class="filter-label">Listing Type</div>
+        <div class="chips">
+          <div class="chip" data-val="all" onclick="setTypeFilter(this)">All</div>
+          <div class="chip active-r active" data-val="Resale" onclick="setTypeFilter(this)">Resale</div>
+          <div class="chip" data-val="BTO" onclick="setTypeFilter(this)">BTO</div>
+        </div>
+      </div>
+      <div>
+        <div class="filter-label">Max Price</div>
+        <div class="range-row">
+          <input type="range" id="price-range" min="200000" max="1500000" step="10000" value="1500000" oninput="applyFilters()">
+          <span class="range-val" id="price-label">Any</span>
+        </div>
+      </div>
+      <div>
+        <div class="filter-label" style="display:flex;justify-content:space-between;">
+          <span>Flat Type</span><span style="color:var(--accent);font-size:9px;cursor:pointer;" onclick="clearFlatFilter()">Clear</span>
+        </div>
+        <div class="chips" id="flat-chips">
+          <!-- populated dynamically -->
+        </div>
+      </div>
+      <div>
+        <div class="filter-label">Min Lease Left</div>
+        <div class="range-row">
+          <input type="range" id="lease-range" min="0" max="99" step="1" value="65" oninput="applyFilters()">
+          <span class="range-val" id="lease-label" style="color:var(--accent);">Any</span>
+        </div>
+      </div>
+      <div>
+        <div class="filter-label" style="display:flex;justify-content:space-between;">
+          <span>Region</span><span style="color:var(--accent);font-size:9px;cursor:pointer;" onclick="clearRegionFilter()">Clear</span>
+        </div>
+        <div class="chips" id="region-chips">
+          <!-- populated dynamically -->
+        </div>
+      </div>
+      <div>
+        <div class="filter-label">Status</div>
+        <div class="chips">
+          <div class="chip active" data-val="all" onclick="setStatusFilter(this)">All</div>
+          <div class="chip" data-val="new" onclick="setStatusFilter(this)">New</div>
+          <div class="chip" data-val="drop" onclick="setStatusFilter(this)">↓ Drop</div>
+          <div class="chip" data-val="rise" onclick="setStatusFilter(this)">↑ Rise</div>
+          <div class="chip" data-val="delist" onclick="setStatusFilter(this)">Delisted</div>
+          <div class="chip" data-val="relist" onclick="setStatusFilter(this)">Relisted</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="listing-list" id="listing-list">
+      <div class="empty-state">Paste your scraped HDB JSON above and click "Load + Save".</div>
+    </div>
+  </div>
+
+  <!-- MAP TAB -->
+  <div class="map-wrap" id="tab-map">
+    <div id="map"></div>
+    <div class="map-legend">
+      <div class="legend-title">Price (quartiles)</div>
+      <div id="legend-price-rows">
+        <div class="legend-row"><div class="legend-dot" style="background:#00b37a"></div> Q1 lowest</div>
+        <div class="legend-row"><div class="legend-dot" style="background:#ffd166"></div> Q2</div>
+        <div class="legend-row"><div class="legend-dot" style="background:#ff6b35"></div> Q3</div>
+        <div class="legend-row"><div class="legend-dot" style="background:#e02849"></div> Q4 highest</div>
+      </div>
+      <div class="legend-sep"></div>
+      <div class="legend-title">Type</div>
+      <div class="legend-row"><div class="legend-dot" style="background:var(--resale)"></div> Resale</div>
+      <div class="legend-row"><div class="legend-dot" style="background:var(--bto)"></div> BTO ▲</div>
+      <div class="legend-sep"></div>
+      <div class="legend-title">Status</div>
+      <div class="legend-row"><div class="legend-dot" style="background:var(--drop);border:2px solid #000"></div> Price drop</div>
+      <div class="legend-row"><div class="legend-dot" style="background:var(--delist)"></div> Delisted</div>
+    </div>
+  </div>
+
+  <!-- CHANGES TAB -->
+  <div style="flex:1;overflow-y:auto;padding:14px;display:none;" id="tab-changes">
+    <div id="changes-list"><div class="empty-state">No changes detected yet. Import JSON to compare against history.</div></div>
+  </div>
+
+  <!-- HISTORY TAB -->
+  <div style="flex:1;overflow-y:auto;padding:14px;display:none;" id="tab-history">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <span style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">ALL IMPORT SNAPSHOTS</span>
+      <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;" id="history-count"></span>
+    </div>
+    <div id="history-list"><div class="empty-state">No import history yet.</div></div>
+  </div>
+</div>
+
+<!-- Import summary modal -->
+<div class="modal-overlay" id="summary-modal">
+  <div class="modal">
+    <h2>IMPORT COMPLETE</h2>
+    <div class="summary-grid" id="summary-grid"></div>
+    <button class="modal-close" onclick="closeModal()">OK</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// MAP SETUP
+// ═══════════════════════════════════════════════════════
+const map = L.map('map', { center: [1.3521, 103.8198], zoom: 12 });
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap © CARTO', maxZoom: 19
+}).addTo(map);
+setTimeout(() => map.invalidateSize(), 150);
+
+// ═══════════════════════════════════════════════════════
+// INDEXEDDB
+// ═══════════════════════════════════════════════════════
+const DB_NAME = 'hdb-tracker', DB_VER = 1;
+let db = null;
+
+function openDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = e => {
+      const d = e.target.result;
+      // listings: one record per unique listingId, stores full current state + price history
+      if (!d.objectStoreNames.contains('listings')) {
+        const s = d.createObjectStore('listings', { keyPath: 'listingId' });
+        s.createIndex('type', 'type');
+        s.createIndex('status', 'status');
+      }
+      // snapshots: one record per import batch
+      if (!d.objectStoreNames.contains('snapshots')) {
+        d.createObjectStore('snapshots', { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    req.onsuccess = e => { db = e.target.result; res(db); };
+    req.onerror = e => rej(e.target.error);
+  });
+}
+
+function dbTx(storeName, mode = 'readonly') {
+  return db.transaction(storeName, mode).objectStore(storeName);
+}
+
+function dbGetAll(storeName) {
+  return new Promise((res, rej) => {
+    const req = dbTx(storeName).getAll();
+    req.onsuccess = () => res(req.result);
+    req.onerror = e => rej(e);
+  });
+}
+
+function dbGet(storeName, key) {
+  return new Promise((res, rej) => {
+    const req = dbTx(storeName).get(key);
+    req.onsuccess = () => res(req.result);
+    req.onerror = e => rej(e);
+  });
+}
+
+function dbPut(storeName, record) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    const req = tx.objectStore(storeName).put(record);
+    req.onsuccess = () => res(req.result);
+    req.onerror = e => rej(e);
+  });
+}
+
+function dbClear(storeName) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    const req = tx.objectStore(storeName).clear();
+    req.onsuccess = () => res();
+    req.onerror = e => rej(e);
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════
+let allListings = [];      // currently displayed (with change metadata)
+let activeMarkers = [];
+let filters = { type: 'Resale', maxPrice: 1500000, flats: new Set(['4-Room', '5-Room']), minLease: 65, regions: new Set(['NORTH REGION']), status: 'all' };
+let currentTab = 'map';
+
+// ═══════════════════════════════════════════════════════
+// PARSE SCRAPED JSON → normalised listing objects
+// ═══════════════════════════════════════════════════════
+function parseRaw(raw) {
+  const arr = JSON.parse(raw);
+  return arr.map((item, i) => {
+    let lat, lng;
+    try { [lat, lng] = JSON.parse(item.coordinates); } catch(e) { return null; }
+
+    const type = item.properties?.listingType || 'Unknown';
+    const desc = item.properties?.description?.[0] || {};
+    const region = item.properties?.region || '';
+
+    if (type === 'Resale') {
+      return {
+        listingId: desc.listingId || `resale-${i}`,
+        type, lat, lng,
+        address: item.properties?.address || 'Unknown',
+        price: desc.price ? +desc.price : null,
+        flatType: desc.flatType || '—',
+        floorArea: desc.floorArea || '—',
+        remainingLease: desc.maxRemainingLease ? `${Math.floor(+desc.maxRemainingLease)} yrs` : '—',
+        creationDate: desc.creationDate ? desc.creationDate.split(' ')[0] : '—',
+        photo: desc.photo ? `https://resources.homes.hdb.gov.sg/${desc.photo}` : null,
+        region,
+      };
+    } else {
+      return {
+        listingId: desc.projectId || `bto-${i}`,
+        type, lat, lng,
+        address: desc.town || 'BTO Project',
+        price: null,
+        flatType: desc.flatType || '—',
+        stage: desc.stage || '—',
+        ballotQtr: desc.ballotQtr || '—',
+        launchDate: desc.launchStartDate ? desc.launchStartDate.split(' ')[0] : '—',
+        remainingLease: desc.maxRemainingLease ? `${desc.maxRemainingLease} yrs` : '—',
+        region,
+      };
+    }
+  }).filter(Boolean);
+}
+
+// ═══════════════════════════════════════════════════════
+// IMPORT: parse → diff against DB → save → render
+// ═══════════════════════════════════════════════════════
+async function importData() {
+  const raw = document.getElementById('data-input').value.trim();
+  if (!raw) { toast('Nothing to import'); return; }
+
+  let parsed;
+  try { parsed = parseRaw(raw); }
+  catch(e) { alert('Parse error: ' + e.message); return; }
+
+  const now = new Date().toISOString();
+  const incomingIds = new Set(parsed.map(l => l.listingId));
+
+  // load existing records
+  const existing = await dbGetAll('listings');
+  const existingMap = new Map(existing.map(r => [r.listingId, r]));
+
+  const summary = { total: parsed.length, newListings: 0, priceDrop: 0, priceRise: 0, delisted: 0, relisted: 0, unchanged: 0 };
+  const changes = [];
+
+  // ── process incoming listings ──
+  for (const l of parsed) {
+    const prev = existingMap.get(l.listingId);
+
+    if (!prev) {
+      // brand new listing
+      await dbPut('listings', {
+        ...l,
+        status: 'active',
+        changeType: 'new',
+        firstSeen: now,
+        lastSeen: now,
+        priceHistory: l.price ? [{ date: now, price: l.price }] : [],
+      });
+      summary.newListings++;
+
+    } else {
+      // existing listing — check for price change
+      let changeType = 'unchanged';
+      const history = prev.priceHistory || [];
+
+      if (l.price !== null && prev.price !== null && l.price !== prev.price) {
+        const diff = l.price - prev.price;
+        changeType = diff < 0 ? 'drop' : 'rise';
+        history.push({ date: now, price: l.price });
+        changes.push({ ...l, prevPrice: prev.price, diff, changeType, history });
+        if (diff < 0) summary.priceDrop++; else summary.priceRise++;
+      } else {
+        summary.unchanged++;
+        // check relisted
+        if (prev.status === 'delisted') {
+          changeType = 'relist';
+          summary.relisted++;
+          changes.push({ ...l, prevPrice: prev.price, diff: 0, changeType, history });
+        }
+      }
+
+      await dbPut('listings', {
+        ...prev, ...l,
+        status: 'active',
+        changeType: changeType === 'unchanged' && prev.status === 'delisted' ? 'relist' : changeType,
+        lastSeen: now,
+        priceHistory: l.price && (history.length === 0 || history[history.length-1]?.price !== l.price)
+          ? [...history, { date: now, price: l.price }]
+          : history,
+      });
+    }
+  }
+
+  // ── mark missing listings as delisted ──
+  for (const prev of existing) {
+    if (!incomingIds.has(prev.listingId) && prev.status === 'active') {
+      await dbPut('listings', { ...prev, status: 'delisted', changeType: 'delist', lastSeen: now });
+      changes.push({ ...prev, changeType: 'delist' });
+      summary.delisted++;
+    }
+  }
+
+  // ── save snapshot ──
+  await dbPut('snapshots', {
+    date: now,
+    count: parsed.length,
+    summary: { ...summary },
+    changeCount: changes.length,
+  });
+
+  // ── reload and render ──
+  await loadFromDB();
+  showSummary(summary);
+  renderChangesTab(changes);
+  renderHistoryTab();
+  updateChangeBadge(changes.length);
+  setTimeout(() => { map.invalidateSize(); }, 50);
+}
+
+// ═══════════════════════════════════════════════════════
+// LOAD FROM DB → state
+// ═══════════════════════════════════════════════════════
+async function loadFromDB() {
+  const records = await dbGetAll('listings');
+  allListings = records;
+  buildFlatChips();
+  buildRegionChips();
+  applyFilters();
+}
+
+// ═══════════════════════════════════════════════════════
+// FILTERS
+// ═══════════════════════════════════════════════════════
+function setTypeFilter(el) {
+  el.parentElement.querySelectorAll('.chip').forEach(c => c.classList.remove('active','active-r','active-b'));
+  filters.type = el.dataset.val;
+  el.classList.add(filters.type === 'Resale' ? 'active-r' : filters.type === 'BTO' ? 'active-b' : 'active');
+  applyFilters();
+}
+
+function toggleFlatFilter(el) {
+  const val = el.dataset.val;
+  if (filters.flats.has(val)) { filters.flats.delete(val); el.classList.remove('active'); }
+  else { filters.flats.add(val); el.classList.add('active'); }
+  applyFilters();
+}
+function clearFlatFilter() {
+  filters.flats.clear();
+  document.querySelectorAll('#flat-chips .chip').forEach(c => c.classList.remove('active'));
+  applyFilters();
+}
+
+function toggleRegionFilter(el) {
+  const val = el.dataset.val;
+  if (filters.regions.has(val)) { filters.regions.delete(val); el.classList.remove('active'); }
+  else { filters.regions.add(val); el.classList.add('active'); }
+  applyFilters();
+}
+function clearRegionFilter() {
+  filters.regions.clear();
+  document.querySelectorAll('#region-chips .chip').forEach(c => c.classList.remove('active'));
+  applyFilters();
+}
+
+function setStatusFilter(el) {
+  el.parentElement.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  filters.status = el.dataset.val;
+  applyFilters();
+}
+
+function applyFilters() {
+  const maxP = +document.getElementById('price-range').value;
+  filters.maxPrice = maxP;
+  document.getElementById('price-label').textContent = maxP >= 1500000 ? 'Any' : '$' + maxP.toLocaleString();
+
+  const minL = +document.getElementById('lease-range').value;
+  filters.minLease = minL;
+  document.getElementById('lease-label').textContent = minL <= 0 ? 'Any' : minL + ' yrs';
+
+  const filtered = allListings.filter(l => {
+    if (filters.type !== 'all' && l.type !== filters.type) return false;
+    if (l.price && l.price > filters.maxPrice) return false;
+    if (filters.flats.size > 0) {
+      const listingTypes = (l.flatType || '').split(',').map(s => s.trim());
+      if (!listingTypes.some(t => filters.flats.has(t))) return false;
+    }
+    if (filters.minLease > 0) {
+      const leaseNum = parseInt(l.remainingLease);
+      if (isNaN(leaseNum) || leaseNum < filters.minLease) return false;
+    }
+    if (filters.regions.size > 0 && !filters.regions.has(l.region)) return false;
+    if (filters.status !== 'all') {
+      if (filters.status === 'delist' && l.status !== 'delisted') return false;
+      if (filters.status === 'drop' && l.changeType !== 'drop') return false;
+      if (filters.status === 'rise' && l.changeType !== 'rise') return false;
+      if (filters.status === 'new' && l.changeType !== 'new') return false;
+      if (filters.status === 'relist' && l.changeType !== 'relist') return false;
+    }
+    return true;
+  });
+
+  renderMarkers(filtered);
+  renderList(filtered);
+  updateStats(filtered);
+}
+
+function buildFlatChips() {
+  const types = new Set(allListings.flatMap(l =>
+    (l.flatType || '').split(',').map(s => s.trim()).filter(Boolean)
+  ));
+  const flatOrder = ['2-Room Flexi', '2-Room', '3-Room', '4-Room', '5-Room', 'EA', '3Gen'];
+  const sorted = [...types].sort((a, b) => {
+    const ia = flatOrder.indexOf(a), ib = flatOrder.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+  });
+  const container = document.getElementById('flat-chips');
+  container.innerHTML = sorted.map(t =>
+    `<div class="chip${filters.flats.has(t) ? ' active' : ''}" data-val="${t}" onclick="toggleFlatFilter(this)">${t}</div>`
+  ).join('') || '<span style="font-size:10px;color:var(--muted);">Load data first</span>';
+}
+
+function buildRegionChips() {
+  const regions = new Set(allListings.map(l => l.region).filter(Boolean));
+  const shorten = r => r
+    .replace('NORTH-EAST REGION', 'NE')
+    .replace('NORTH REGION', 'North')
+    .replace('SOUTH REGION', 'South')
+    .replace('EAST REGION', 'East')
+    .replace('WEST REGION', 'West')
+    .replace('CENTRAL REGION', 'Central');
+  const container = document.getElementById('region-chips');
+  container.innerHTML = [...regions].sort().map(r =>
+    `<div class="chip${filters.regions.has(r) ? ' active' : ''}" data-val="${r}" title="${r}" onclick="toggleRegionFilter(this)">${shorten(r)}</div>`
+  ).join('') || '<span style="font-size:10px;color:var(--muted);">Load data first</span>';
+}
+
+// ═══════════════════════════════════════════════════════
+// COLOUR / ICON HELPERS  (dynamic quartile scale)
+// ═══════════════════════════════════════════════════════
+const PRICE_COLORS = ['#00b37a', '#ffd166', '#ff6b35', '#e02849']; // Q1→Q4
+let priceBreaks = [400000, 600000, 800000]; // updated per filtered set
+
+function computePriceBreaks(data) {
+  const prices = data
+    .filter(l => l.type === 'Resale' && l.price && l.status !== 'delisted')
+    .map(l => l.price)
+    .sort((a, b) => a - b);
+  if (prices.length < 4) {
+    priceBreaks = [400000, 600000, 800000]; // fallback
+    return;
+  }
+  const q = i => prices[Math.floor(prices.length * i / 4)];
+  priceBreaks = [q(1), q(2), q(3)];
+}
+
+function priceColor(p) {
+  if (!p) return '#1a7fe0';
+  if (p <= priceBreaks[0]) return PRICE_COLORS[0];
+  if (p <= priceBreaks[1]) return PRICE_COLORS[1];
+  if (p <= priceBreaks[2]) return PRICE_COLORS[2];
+  return PRICE_COLORS[3];
+}
+
+function updateLegend() {
+  const fmt = p => '$' + Math.round(p / 1000) + 'k';
+  const [b1, b2, b3] = priceBreaks;
+  document.getElementById('legend-price-rows').innerHTML = `
+    <div class="legend-row"><div class="legend-dot" style="background:${PRICE_COLORS[0]}"></div> ≤ ${fmt(b1)}</div>
+    <div class="legend-row"><div class="legend-dot" style="background:${PRICE_COLORS[1]}"></div> ${fmt(b1)}–${fmt(b2)}</div>
+    <div class="legend-row"><div class="legend-dot" style="background:${PRICE_COLORS[2]}"></div> ${fmt(b2)}–${fmt(b3)}</div>
+    <div class="legend-row"><div class="legend-dot" style="background:${PRICE_COLORS[3]}"></div> &gt; ${fmt(b3)}</div>`;
+}
+
+function makeIcon(l) {
+  const isBTO = l.type === 'BTO';
+  const isDelist = l.status === 'delisted';
+  const hasDrop = l.changeType === 'drop';
+  const c = isDelist ? '#ff6b35' : isBTO ? '#c084fc' : priceColor(l.price);
+  // ring highlight for price change
+  const ring = hasDrop ? `<circle cx="13" cy="13" r="12" fill="none" stroke="#00e5a0" stroke-width="2" opacity=".8"/>` : '';
+  const shape = isBTO
+    ? `<polygon points="13,2 24,22 2,22" fill="${c}" opacity="${isDelist ? .4 : .9}"/><circle cx="13" cy="17" r="3" fill="#ffffff"/>`
+    : `<path d="M13 0C5.82 0 0 5.82 0 13c0 9.75 13 19 13 19s13-9.25 13-19C26 5.82 20.18 0 13 0z" fill="${c}" opacity="${isDelist ? .4 : .9}"/><circle cx="13" cy="13" r="4.5" fill="#ffffff"/>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="32" viewBox="0 0 26 32">${ring}${shape}</svg>`;
+  return L.divIcon({ html: svg, className: '', iconSize: [26,32], iconAnchor: [13,32], popupAnchor: [0,-34] });
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER MARKERS
+// ═══════════════════════════════════════════════════════
+function renderMarkers(data) {
+  computePriceBreaks(data);
+  updateLegend();
+  activeMarkers.forEach(m => map.removeLayer(m));
+  activeMarkers = [];
+  data.forEach(l => {
+    const m = L.marker([l.lat, l.lng], { icon: makeIcon(l) }).addTo(map);
+    m.bindPopup(makePopup(l), { maxWidth: 290 });
+    m.on('click', () => highlightCard(l.listingId));
+    activeMarkers.push(m);
+    l._marker = m;
+  });
+}
+
+function makePopup(l) {
+  const isBTO = l.type === 'BTO';
+  const c = isBTO ? 'var(--bto)' : priceColor(l.price);
+  const badgeClass = isBTO ? 'badge-bto' : 'badge-resale';
+  const changePart = l.changeType && l.changeType !== 'unchanged'
+    ? `<div style="margin-top:6px;">${changeBadgeHtml(l.changeType, l.price, l.prevPrice)}</div>` : '';
+
+  // price history rows (last 5)
+  let historyHtml = '';
+  if (l.priceHistory && l.priceHistory.length > 1) {
+    const rows = l.priceHistory.slice(-5).reverse().map(h =>
+      `<div class="popup-history-row"><span>${h.date.split('T')[0]}</span><span class="ph-price">$${(+h.price).toLocaleString()}</span></div>`
+    ).join('');
+    historyHtml = `<div class="popup-history"><div class="popup-history-title">Price History</div>${rows}</div>`;
+  }
+
+  if (isBTO) {
+    return `<div class="popup-badge ${badgeClass}">BTO · ${l.stage || '—'}</div>
+      ${changePart}
+      <div class="popup-price" style="color:${c}">${l.address}</div>
+      <div class="popup-addr">${l.region}</div>
+      <div class="popup-grid">
+        <div class="popup-item"><div class="popup-item-label">Flat Types</div><div class="popup-item-val" style="font-size:10px">${l.flatType}</div></div>
+        <div class="popup-item"><div class="popup-item-label">Ballot</div><div class="popup-item-val">${l.ballotQtr || '—'}</div></div>
+        <div class="popup-item"><div class="popup-item-label">Launch</div><div class="popup-item-val">${l.launchDate || '—'}</div></div>
+        <div class="popup-item"><div class="popup-item-label">Lease</div><div class="popup-item-val">${l.remainingLease}</div></div>
+      </div>${historyHtml}`;
+  } else {
+    const thumbHtml = l.photo
+      ? `<div class="popup-thumb-wrap">
+           <img class="popup-thumb" src="${l.photo}" alt="" loading="lazy"
+             onerror="this.parentElement.style.display='none'">
+           <div class="popup-thumb-label">${l.address}</div>
+         </div>`
+      : '';
+    const maxW = l.photo ? 300 : 290;
+    // Leaflet doesn't let us set maxWidth per-popup after creation, so we
+    // embed a style wrapper instead
+    return `<div style="min-width:${l.photo ? '260px' : '190px'}">
+      ${thumbHtml}
+      <div class="popup-badge ${badgeClass}">RESALE · ${l.flatType}</div>
+      ${changePart}
+      <div class="popup-price" style="color:${c}">${l.price ? '$'+l.price.toLocaleString() : 'N/A'}</div>
+      ${l.photo ? '' : `<div class="popup-addr">${l.address}</div>`}
+      <div class="popup-grid" style="margin-top:7px;">
+        <div class="popup-item"><div class="popup-item-label">Floor Area</div><div class="popup-item-val">${l.floorArea}</div></div>
+        <div class="popup-item"><div class="popup-item-label">Lease Left</div><div class="popup-item-val">${l.remainingLease}</div></div>
+        <div class="popup-item"><div class="popup-item-label">Listed</div><div class="popup-item-val">${l.creationDate || '—'}</div></div>
+        <div class="popup-item"><div class="popup-item-label">Status</div><div class="popup-item-val">${l.status === 'delisted' ? '⚠ Delisted' : 'Active'}</div></div>
+      </div>
+      ${historyHtml}
+      <a href="https://homes.hdb.gov.sg/home/resale/${l.listingId}" target="_blank" rel="noopener"
+        style="display:flex;align-items:center;justify-content:center;gap:6px;margin-top:10px;padding:7px 10px;border-radius:5px;background:#daeeff;border:1px solid #a8d4f5;color:var(--resale);font-size:11px;font-family:'DM Mono',monospace;text-decoration:none;transition:background .15s;"
+        onmouseover="this.style.background='#c4e5fb'" onmouseout="this.style.background='#daeeff'">
+        View on HDB Homes ↗
+      </a>
+    </div>`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER SIDEBAR LIST
+// ═══════════════════════════════════════════════════════
+function renderList(data) {
+  const el = document.getElementById('listing-list');
+  if (!data.length) { el.innerHTML = '<div class="empty-state">No listings match current filters.</div>'; return; }
+
+  const sorted = [...data].sort((a, b) => {
+    // priority: changes first, then by price
+    const rank = { drop:0, relist:1, new:2, rise:3, unchanged:4, delist:5 };
+    const ra = rank[a.changeType] ?? 4, rb = rank[b.changeType] ?? 4;
+    if (ra !== rb) return ra - rb;
+    return (a.price || 999999999) - (b.price || 999999999);
+  });
+
+  el.innerHTML = sorted.map(l => {
+    const isBTO = l.type === 'BTO';
+    const isDelist = l.status === 'delisted';
+    const priceStr = l.price ? '$' + (+l.price).toLocaleString() : isBTO ? 'TBC' : 'N/A';
+    const priceColor2 = isDelist ? 'var(--muted)' : isBTO ? 'var(--bto)' : priceColor(l.price);
+    const typeClass = isBTO ? 'badge-bto' : 'badge-resale';
+    const meta = isBTO
+      ? [l.stage, `Ballot ${l.ballotQtr}`].filter(x => x && x !== '—' && x !== 'Ballot —')
+      : [l.flatType, l.floorArea, `${l.remainingLease} lease`].filter(x => x && x !== '—');
+
+    const prevBadge = l.changeType && l.changeType !== 'unchanged'
+      ? changeBadgeHtml(l.changeType, l.price, l.prevPrice) : '';
+
+    return `<div class="listing-card${isDelist ? ' opacity-50' : ''}" id="card-${l.listingId}" onclick="focusListing('${l.listingId}')" style="${isDelist ? 'opacity:.55;' : ''}">
+      <div class="card-top">
+        <div class="card-price" style="color:${priceColor2}">${priceStr}</div>
+        <div class="card-badges">
+          ${prevBadge}
+          <div class="type-badge ${typeClass}">${isDelist ? '✕ ' : ''}${l.type}</div>
+        </div>
+      </div>
+      <div class="card-addr" title="${l.address}">${l.address}</div>
+      <div class="card-meta">${meta.map(m => `<span>${m}</span>`).join('')}</div>
+    </div>`;
+  }).join('');
+}
+
+function changeBadgeHtml(changeType, newPrice, prevPrice) {
+  const fmt = p => p ? '$' + (+p).toLocaleString() : '?';
+  const diff = (newPrice && prevPrice) ? newPrice - prevPrice : null;
+  const diffStr = diff !== null ? ` (${diff > 0 ? '+' : ''}${fmt(diff)})` : '';
+  switch(changeType) {
+    case 'drop':    return `<span class="change-badge cb-drop">↓ ${fmt(prevPrice)}${diffStr}</span>`;
+    case 'rise':    return `<span class="change-badge cb-rise">↑ ${fmt(prevPrice)}${diffStr}</span>`;
+    case 'delist':  return `<span class="change-badge cb-delist">Delisted</span>`;
+    case 'relist':  return `<span class="change-badge cb-relist">Relisted</span>`;
+    case 'new':     return `<span class="change-badge cb-new">New</span>`;
+    default:        return '';
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// STATS
+// ═══════════════════════════════════════════════════════
+function updateStats(filtered) {
+  const resale = filtered.filter(l => l.type === 'Resale');
+  const bto = filtered.filter(l => l.type === 'BTO');
+  document.getElementById('s-resale').textContent = resale.length;
+  document.getElementById('s-bto').textContent = bto.length;
+  const prices = resale.map(l => l.price).filter(Boolean).sort((a, b) => a - b);
+  if (prices.length) {
+    document.getElementById('s-med').textContent = '$' + Math.round(prices[Math.floor(prices.length/2)]/1000) + 'k';
+    document.getElementById('s-low').textContent = '$' + Math.round(prices[0]/1000) + 'k';
+  } else {
+    document.getElementById('s-med').textContent = '—';
+    document.getElementById('s-low').textContent = '—';
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// CHANGES TAB
+// ═══════════════════════════════════════════════════════
+function renderChangesTab(changes) {
+  const el = document.getElementById('changes-list');
+  if (!changes.length) { el.innerHTML = '<div class="empty-state">No changes detected in this import.</div>'; return; }
+
+  const order = ['drop','relist','new','rise','delist'];
+  const sorted = [...changes].sort((a,b) => order.indexOf(a.changeType) - order.indexOf(b.changeType));
+
+  el.innerHTML = sorted.map(l => {
+    const c = l.changeType;
+    const diff = l.diff;
+    const diffFmt = diff ? `${diff > 0 ? '+' : ''}$${Math.abs(diff).toLocaleString()}` : '';
+    const newColor = c === 'drop' ? 'var(--drop)' : c === 'rise' ? 'var(--rise)' : c === 'delist' ? 'var(--delist)' : c === 'relist' ? 'var(--relist)' : 'var(--resale)';
+
+    return `<div class="history-entry">
+      <div class="he-top">
+        <div class="he-addr">${l.address}</div>
+        <div>${changeBadgeHtml(c, l.price, l.prevPrice)}</div>
+      </div>
+      ${(c === 'drop' || c === 'rise') ? `<div class="he-prices">
+        <span class="he-old">$${(+l.prevPrice).toLocaleString()}</span>
+        <span class="he-arrow">→</span>
+        <span class="he-new" style="color:${newColor}">$${(+l.price).toLocaleString()}</span>
+        <span class="he-diff" style="background:${newColor}22;color:${newColor}">${diffFmt}</span>
+      </div>` : ''}
+      <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;">
+        <span style="font-size:9px;font-family:'DM Mono',monospace;color:var(--muted);background:#eaecf1;padding:2px 5px;border-radius:3px;">${l.flatType || '—'}</span>
+        <span style="font-size:9px;font-family:'DM Mono',monospace;color:var(--muted);background:#eaecf1;padding:2px 5px;border-radius:3px;">${l.region || '—'}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function updateChangeBadge(n) {
+  const badge = document.getElementById('tab-changes-badge');
+  badge.textContent = n;
+  badge.style.display = n ? '' : 'none';
+}
+
+// ═══════════════════════════════════════════════════════
+// HISTORY TAB
+// ═══════════════════════════════════════════════════════
+async function renderHistoryTab() {
+  const snapshots = await dbGetAll('snapshots');
+  const el = document.getElementById('history-list');
+  document.getElementById('history-count').textContent = `${snapshots.length} imports`;
+
+  if (!snapshots.length) { el.innerHTML = '<div class="empty-state">No import history yet.</div>'; return; }
+
+  const sorted = [...snapshots].sort((a,b) => b.date.localeCompare(a.date));
+  el.innerHTML = sorted.map(s => {
+    const d = new Date(s.date);
+    const dateStr = d.toLocaleDateString('en-SG', {day:'2-digit',month:'short',year:'numeric'});
+    const timeStr = d.toLocaleTimeString('en-SG', {hour:'2-digit',minute:'2-digit'});
+    const sm = s.summary || {};
+    return `<div class="history-entry">
+      <div class="he-top">
+        <span style="font-family:'DM Mono',monospace;font-size:12px;color:var(--text);">${dateStr} ${timeStr}</span>
+        <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);">${s.count} listings</span>
+      </div>
+      <div style="display:flex;gap:5px;margin-top:7px;flex-wrap:wrap;">
+        ${sm.newListings ? `<span class="change-badge cb-new">+${sm.newListings} new</span>` : ''}
+        ${sm.priceDrop ? `<span class="change-badge cb-drop">↓ ${sm.priceDrop} drops</span>` : ''}
+        ${sm.priceRise ? `<span class="change-badge cb-rise">↑ ${sm.priceRise} rises</span>` : ''}
+        ${sm.delisted ? `<span class="change-badge cb-delist">${sm.delisted} delisted</span>` : ''}
+        ${sm.relisted ? `<span class="change-badge cb-relist">${sm.relisted} relisted</span>` : ''}
+        ${sm.unchanged ? `<span style="font-size:9px;font-family:'DM Mono',monospace;color:var(--muted);background:#eaecf1;padding:2px 5px;border-radius:3px;">${sm.unchanged} unchanged</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════
+// TABS
+// ═══════════════════════════════════════════════════════
+function switchTab(el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  currentTab = el.dataset.tab;
+  document.getElementById('tab-map').style.display = currentTab === 'map' ? 'block' : 'none';
+  document.getElementById('tab-map').style.flex = currentTab === 'map' ? '1' : '';
+  document.getElementById('tab-changes').style.display = currentTab === 'changes' ? 'flex' : 'none';
+  document.getElementById('tab-history').style.display = currentTab === 'history' ? 'flex' : 'none';
+  if (currentTab === 'map') setTimeout(() => map.invalidateSize(), 50);
+  if (currentTab === 'history') renderHistoryTab();
+}
+
+// ═══════════════════════════════════════════════════════
+// FOCUS / HIGHLIGHT
+// ═══════════════════════════════════════════════════════
+function focusListing(id) {
+  const l = allListings.find(x => x.listingId === id);
+  if (!l || !l._marker) return;
+  switchTab(document.querySelector('.tab[data-tab="map"]'));
+  map.setView([l.lat, l.lng], 16);
+  l._marker.openPopup();
+  highlightCard(id);
+}
+
+function highlightCard(id) {
+  document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
+  const card = document.getElementById('card-' + id);
+  if (card) { card.classList.add('active'); card.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+}
+
+// ═══════════════════════════════════════════════════════
+// IMPORT / EXPORT DB
+// ═══════════════════════════════════════════════════════
+async function exportDB() {
+  const listings = await dbGetAll('listings');
+  const snapshots = await dbGetAll('snapshots');
+  const data = { version: 1, exportedAt: new Date().toISOString(), listings, snapshots };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `hdb-tracker-${new Date().toISOString().split('T')[0]}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Database exported');
+}
+
+function triggerImportDB() {
+  document.getElementById('db-file-input').click();
+}
+
+async function importDBFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!data.listings || !data.snapshots) throw new Error('Invalid DB file format');
+    await dbClear('listings');
+    await dbClear('snapshots');
+    const lTx = db.transaction('listings', 'readwrite');
+    const lStore = lTx.objectStore('listings');
+    for (const r of data.listings) lStore.put(r);
+    await new Promise((res, rej) => { lTx.oncomplete = res; lTx.onerror = rej; });
+    const sTx = db.transaction('snapshots', 'readwrite');
+    const sStore = sTx.objectStore('snapshots');
+    for (const r of data.snapshots) sStore.put(r);
+    await new Promise((res, rej) => { sTx.oncomplete = res; sTx.onerror = rej; });
+    await loadFromDB();
+    await renderHistoryTab();
+    toast(`Imported ${data.listings.length} listings, ${data.snapshots.length} snapshots`);
+  } catch(e) {
+    alert('Import failed: ' + e.message);
+  }
+  input.value = '';
+}
+
+async function confirmClearDB() {
+  if (!confirm('Clear all history? This cannot be undone.')) return;
+  await dbClear('listings');
+  await dbClear('snapshots');
+  allListings = [];
+  activeMarkers.forEach(m => map.removeLayer(m));
+  activeMarkers = [];
+  document.getElementById('listing-list').innerHTML = '<div class="empty-state">Database cleared.</div>';
+  document.getElementById('changes-list').innerHTML = '<div class="empty-state">No changes detected yet.</div>';
+  document.getElementById('history-list').innerHTML = '<div class="empty-state">No import history yet.</div>';
+  updateStats([]);
+  updateChangeBadge(0);
+  toast('Database cleared');
+}
+
+// ═══════════════════════════════════════════════════════
+// SUMMARY MODAL
+// ═══════════════════════════════════════════════════════
+function showSummary(s) {
+  const items = [
+    { val: s.total, label: 'Total', color: 'var(--resale)' },
+    { val: s.newListings, label: 'New', color: 'var(--resale)' },
+    { val: s.priceDrop, label: 'Price Drops', color: 'var(--drop)' },
+    { val: s.priceRise, label: 'Price Rises', color: 'var(--rise)' },
+    { val: s.delisted, label: 'Delisted', color: 'var(--delist)' },
+    { val: s.relisted, label: 'Relisted', color: 'var(--relist)' },
+  ];
+  document.getElementById('summary-grid').innerHTML = items.map(i =>
+    `<div class="sg-item"><div class="sg-val" style="color:${i.color}">${i.val}</div><div class="sg-label">${i.label}</div></div>`
+  ).join('');
+  document.getElementById('summary-modal').classList.add('show');
+}
+function closeModal() {
+  document.getElementById('summary-modal').classList.remove('show');
+}
+
+// ═══════════════════════════════════════════════════════
+// MISC
+// ═══════════════════════════════════════════════════════
+function clearView() {
+  allListings = [];
+  activeMarkers.forEach(m => map.removeLayer(m));
+  activeMarkers = [];
+  document.getElementById('listing-list').innerHTML = '<div class="empty-state">View cleared. DB intact. Re-import to reload.</div>';
+  document.getElementById('data-input').value = '';
+  updateStats([]);
+}
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+function loadSample() {
+  const sample = [
+    {"coordinates":"[1.376551, 103.835287]","properties":{"listingType":"BTO","description":[{"maxRemainingLease":"99","stage":"Upcoming","town":"Ang Mo Kio","launchStartDate":"2026-02-04 10:00:00.0","ballotQtr":"2026-02","flatType":"3-Room, 4-Room","projectId":"2026-02_AMK_TEST1"}],"hdbCategory":"1","region":"NORTH-EAST REGION"}},
+    {"resaleMaxCount":"2000","coordinates":"[1.3050750930987265, 103.76345208931811]","properties":{"address":"729 CLEMENTI WEST ST 2 S(120729)","listingType":"Resale","description":[{"maxRemainingLease":"56.0","price":"410000","flatType":"3-Room","listingId":"30628","creationDate":"2026-02-20 09:52:55.367","floorArea":"68.0 sqm"}],"hdbCategory":"0","region":"WEST REGION"}},
+    {"coordinates":"[1.3521, 103.8198]","properties":{"address":"BLK 51 TOA PAYOH LOR 5 S(310051)","listingType":"Resale","description":[{"maxRemainingLease":"62.0","price":"580000","flatType":"4-Room","listingId":"30001","creationDate":"2026-02-18 10:00:00.0","floorArea":"90.0 sqm"}],"hdbCategory":"0","region":"CENTRAL REGION"}},
+    {"coordinates":"[1.3833, 103.7468]","properties":{"address":"BLK 231 BUKIT BATOK W AVE 8 S(650231)","listingType":"Resale","description":[{"maxRemainingLease":"72.0","price":"340000","flatType":"3-Room","listingId":"30002","creationDate":"2026-02-17 10:00:00.0","floorArea":"65.0 sqm"}],"hdbCategory":"0","region":"WEST REGION"}},
+    {"coordinates":"[1.2966, 103.8486]","properties":{"address":"BLK 3 QUEENSWAY S(149052)","listingType":"Resale","description":[{"maxRemainingLease":"55.0","price":"850000","flatType":"EA","listingId":"30003","creationDate":"2026-02-15 10:00:00.0","floorArea":"147.0 sqm"}],"hdbCategory":"0","region":"CENTRAL REGION"}}
+  ];
+  document.getElementById('data-input').value = JSON.stringify(sample, null, 2);
+}
+
+// ═══════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════
+openDB().then(async () => {
+  await loadFromDB();
+  await renderHistoryTab();
+  const all = await dbGetAll('listings');
+  // restore change badges from last import
+  const changes = all.filter(l => l.changeType && l.changeType !== 'unchanged');
+  updateChangeBadge(changes.length);
+  if (changes.length) renderChangesTab(changes);
+}).catch(e => {
+  console.error('DB init failed:', e);
+  toast('IndexedDB unavailable');
+});
+</script>
+</body>
+</html>
