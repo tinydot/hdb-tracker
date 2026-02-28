@@ -46,8 +46,12 @@ header{display:flex;align-items:center;justify-content:space-between;padding:9px
 .sidebar{width:340px;flex-shrink:0;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
 .sidebar-top{padding:11px 13px;border-bottom:1px solid var(--border);}
 .sidebar-top h3{font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:7px;font-family:'DM Mono',monospace;}
-textarea{width:100%;height:75px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:'DM Mono',monospace;font-size:10px;padding:7px;resize:none;outline:none;transition:border-color .2s;}
-textarea:focus{border-color:var(--accent);}
+.file-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:75px;background:var(--bg);border:1.5px dashed var(--border);border-radius:5px;cursor:pointer;transition:border-color .2s,background .2s;gap:3px;user-select:none;}
+.file-drop:hover,.file-drop.drag-over{border-color:var(--accent);background:#f0fdf8;}
+.file-drop.has-file{border-style:solid;border-color:var(--accent);}
+.file-drop-icon{font-size:18px;line-height:1;}
+.file-drop-text{font-family:'DM Mono',monospace;font-size:10px;color:var(--text);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;}
+.file-drop-sub{font-size:9px;color:var(--muted);}
 .btn-row{display:flex;gap:5px;margin-top:6px;}
 button{flex:1;padding:6px 8px;border-radius:5px;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;transition:opacity .2s;white-space:nowrap;}
 button:hover{opacity:.82;}
@@ -174,8 +178,13 @@ input[type=range]{flex:1;accent-color:var(--resale);}
 <div class="main">
   <div class="sidebar">
     <div class="sidebar-top">
-      <h3>Paste Scraped JSON</h3>
-      <textarea id="data-input" placeholder="Paste your hdb.json array here..."></textarea>
+      <h3>Load Scraped JSON</h3>
+      <div class="file-drop" id="file-drop-area" onclick="document.getElementById('scrape-file-input').click()">
+        <div class="file-drop-icon" id="file-drop-icon">📂</div>
+        <div class="file-drop-text" id="file-drop-text">Click to select hdb.json</div>
+        <div class="file-drop-sub" id="file-drop-sub">or drag &amp; drop</div>
+      </div>
+      <input type="file" id="scrape-file-input" accept=".json" style="display:none" onchange="onScrapeFileChange(this)">
       <div class="btn-row">
         <button class="btn-primary" onclick="importData()">Load + Save</button>
         <button class="btn-secondary" onclick="loadSample()">Sample</button>
@@ -236,7 +245,7 @@ input[type=range]{flex:1;accent-color:var(--resale);}
     </div>
 
     <div class="listing-list" id="listing-list">
-      <div class="empty-state">Paste your scraped HDB JSON above and click "Load + Save".</div>
+      <div class="empty-state">Select your scraped hdb.json above and click "Load + Save".</div>
     </div>
   </div>
 
@@ -370,6 +379,46 @@ let allListings = [];      // currently displayed (with change metadata)
 let activeMarkers = [];
 let filters = { type: 'Resale', maxPrice: 1500000, flats: new Set(['4-Room', '5-Room']), minLease: 65, regions: new Set(['NORTH REGION']), status: 'all' };
 let currentTab = 'map';
+let selectedScrapeFile = null;
+
+// ── File picker UI helpers ──
+function onScrapeFileChange(input) {
+  selectedScrapeFile = input.files[0] || null;
+  const area = document.getElementById('file-drop-area');
+  const icon = document.getElementById('file-drop-icon');
+  const text = document.getElementById('file-drop-text');
+  const sub  = document.getElementById('file-drop-sub');
+  if (selectedScrapeFile) {
+    area.classList.add('has-file');
+    icon.textContent = '✓';
+    text.textContent = selectedScrapeFile.name;
+    sub.textContent  = (selectedScrapeFile.size / 1024).toFixed(1) + ' KB';
+  } else {
+    area.classList.remove('has-file');
+    icon.textContent = '📂';
+    text.textContent = 'Click to select hdb.json';
+    sub.textContent  = 'or drag & drop';
+  }
+}
+
+// ── Drag-and-drop support ──
+(function setupDrop() {
+  const area = document.getElementById('file-drop-area');
+  area.addEventListener('dragover', e => { e.preventDefault(); area.classList.add('drag-over'); });
+  area.addEventListener('dragleave', () => area.classList.remove('drag-over'));
+  area.addEventListener('drop', e => {
+    e.preventDefault();
+    area.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    // Sync to the hidden input so onScrapeFileChange can read it
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const input = document.getElementById('scrape-file-input');
+    input.files = dt.files;
+    onScrapeFileChange(input);
+  });
+})();
 
 // ═══════════════════════════════════════════════════════
 // PARSE SCRAPED JSON → normalised listing objects
@@ -418,8 +467,11 @@ function parseRaw(raw) {
 // IMPORT: parse → diff against DB → save → render
 // ═══════════════════════════════════════════════════════
 async function importData() {
-  const raw = document.getElementById('data-input').value.trim();
-  if (!raw) { toast('Nothing to import'); return; }
+  if (!selectedScrapeFile) { toast('No file selected'); return; }
+
+  let raw;
+  try { raw = await selectedScrapeFile.text(); }
+  catch(e) { alert('Could not read file: ' + e.message); return; }
 
   let parsed;
   try { parsed = parseRaw(raw); }
@@ -1028,7 +1080,10 @@ function clearView() {
   activeMarkers.forEach(m => map.removeLayer(m));
   activeMarkers = [];
   document.getElementById('listing-list').innerHTML = '<div class="empty-state">View cleared. DB intact. Re-import to reload.</div>';
-  document.getElementById('data-input').value = '';
+  // reset file picker
+  selectedScrapeFile = null;
+  document.getElementById('scrape-file-input').value = '';
+  onScrapeFileChange({ files: [] });
   updateStats([]);
 }
 
@@ -1047,7 +1102,15 @@ function loadSample() {
     {"coordinates":"[1.3833, 103.7468]","properties":{"address":"BLK 231 BUKIT BATOK W AVE 8 S(650231)","listingType":"Resale","description":[{"maxRemainingLease":"72.0","price":"340000","flatType":"3-Room","listingId":"30002","creationDate":"2026-02-17 10:00:00.0","floorArea":"65.0 sqm"}],"hdbCategory":"0","region":"WEST REGION"}},
     {"coordinates":"[1.2966, 103.8486]","properties":{"address":"BLK 3 QUEENSWAY S(149052)","listingType":"Resale","description":[{"maxRemainingLease":"55.0","price":"850000","flatType":"EA","listingId":"30003","creationDate":"2026-02-15 10:00:00.0","floorArea":"147.0 sqm"}],"hdbCategory":"0","region":"CENTRAL REGION"}}
   ];
-  document.getElementById('data-input').value = JSON.stringify(sample, null, 2);
+  // Load sample as a virtual File so it goes through the normal import path
+  const blob = new Blob([JSON.stringify(sample)], { type: 'application/json' });
+  const file = new File([blob], 'sample.json', { type: 'application/json' });
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  const input = document.getElementById('scrape-file-input');
+  input.files = dt.files;
+  onScrapeFileChange(input);
+  toast('Sample data loaded — click "Load + Save"');
 }
 
 // ═══════════════════════════════════════════════════════
