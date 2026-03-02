@@ -1168,10 +1168,21 @@ async function toggleLayer(type) {
       const lon = item.lon ?? item.center?.lon;
       if (!lat || !lon) return;
       const name = item.tags?.name || item.tags?.['name:en'] || cfg.label;
-      L.circleMarker([lat, lon], {
-        radius: cfg.radius, color: cfg.color, fillColor: cfg.color,
-        fillOpacity: 0.75, weight: 1.5, opacity: 1
-      }).bindPopup(`<b style="font-size:11px;font-family:'DM Mono',monospace">${name}</b>`).addTo(grp);
+      if (type === 'mrt') {
+        const icon = L.divIcon({
+          className: '',
+          html: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="${cfg.color}"><path d="M12 2c-4 0-8 .5-8 4v9.5C4 17.43 5.57 19 7.5 19L6 20.5v.5h12v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V6c0-3.5-3.58-4-8-4zm0 2c3.51 0 5.5.48 6 1.75V9H6V5.75C6.5 4.48 8.49 4 12 4zM7.5 10h9a1.5 1.5 0 0 1 0 3h-9a1.5 1.5 0 0 1 0-3zm0 5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm9 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/></svg>`,
+          iconSize: [20, 20],
+          iconAnchor: [10, 10]
+        });
+        L.marker([lat, lon], { icon })
+          .bindPopup(`<b style="font-size:11px;font-family:'DM Mono',monospace">${name}</b>`).addTo(grp);
+      } else {
+        L.circleMarker([lat, lon], {
+          radius: cfg.radius, color: cfg.color, fillColor: cfg.color,
+          fillOpacity: 0.75, weight: 1.5, opacity: 1
+        }).bindPopup(`<b style="font-size:11px;font-family:'DM Mono',monospace">${name}</b>`).addTo(grp);
+      }
     });
     overlayLayers[type] = grp;
     if (layerActive[type]) grp.addTo(map);
