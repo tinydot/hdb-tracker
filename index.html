@@ -135,6 +135,12 @@ input[type=range]{flex:1;accent-color:var(--resale);}
 .popup-history-row{display:flex;justify-content:space-between;font-size:10px;font-family:'DM Mono',monospace;margin-bottom:3px;color:var(--muted);}
 .popup-history-row .ph-price{color:var(--text);}
 
+/* ── MAP LAYER TOGGLES ── */
+.layer-btns{display:flex;flex-direction:column;gap:3px;margin-top:2px;}
+.layer-btn{padding:3px 8px;border-radius:4px;font-size:9px;cursor:pointer;border:1px solid var(--border);color:var(--muted);background:transparent;transition:all .15s;user-select:none;text-align:center;white-space:nowrap;}
+.layer-btn:hover{border-color:var(--muted);color:var(--text);}
+.layer-btn.active{background:#eef0f4;color:var(--text);border-color:var(--text);font-weight:600;}
+
 /* ── TOAST ── */
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:9px 16px;font-size:12px;font-family:'DM Mono',monospace;color:var(--text);z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none;white-space:nowrap;}
 .toast.show{opacity:1;}
@@ -268,6 +274,13 @@ input[type=range]{flex:1;accent-color:var(--resale);}
       <div class="legend-title">Status</div>
       <div class="legend-row"><div class="legend-dot" style="background:var(--drop);border:2px solid #000"></div> Price drop</div>
       <div class="legend-row"><div class="legend-dot" style="background:var(--delist)"></div> Delisted</div>
+      <div class="legend-sep"></div>
+      <div class="legend-title">Overlays</div>
+      <div class="layer-btns">
+        <div class="layer-btn" id="lt-mrt" onclick="toggleLayer('mrt')">🚇 MRT</div>
+        <div class="layer-btn" id="lt-bus" onclick="toggleLayer('bus')">🚌 Bus Stops</div>
+        <div class="layer-btn" id="lt-school" onclick="toggleLayer('school')">🏫 Schools</div>
+      </div>
     </div>
   </div>
 
@@ -1111,6 +1124,64 @@ function loadSample() {
   input.files = dt.files;
   onScrapeFileChange(input);
   toast('Sample data loaded — click "Load + Save"');
+}
+
+// ═══════════════════════════════════════════════════════
+// MAP OVERLAY LAYERS (MRT / Bus Stops / Schools)
+// ═══════════════════════════════════════════════════════
+const overlayLayers = { mrt: null, bus: null, school: null };
+const layerActive   = { mrt: false, bus: false, school: false };
+const SG_BBOX = '1.15,103.58,1.48,104.05';
+const LAYER_CFG = {
+  mrt:    { query:`node["railway"="station"](${SG_BBOX});`,
+            color:'#e02849', radius:7, label:'MRT Stations', btnLabel:'🚇 MRT' },
+  bus:    { query:`node["highway"="bus_stop"](${SG_BBOX});`,
+            color:'#1a7fe0', radius:4, label:'Bus Stops', btnLabel:'🚌 Bus Stops' },
+  school: { query:`(node["amenity"="school"](${SG_BBOX});way["amenity"="school"](${SG_BBOX}););`,
+            color:'#f59e0b', radius:6, label:'Schools', btnLabel:'🏫 Schools' }
+};
+
+async function toggleLayer(type) {
+  const btn = document.getElementById('lt-' + type);
+  if (layerActive[type]) {
+    layerActive[type] = false;
+    if (overlayLayers[type]) map.removeLayer(overlayLayers[type]);
+    btn.classList.remove('active');
+    return;
+  }
+  layerActive[type] = true;
+  btn.classList.add('active');
+  // already fetched — just re-add
+  if (overlayLayers[type]) { overlayLayers[type].addTo(map); return; }
+
+  btn.textContent = '⟳ Loading…';
+  const cfg = LAYER_CFG[type];
+  const q = `[out:json][timeout:25];${cfg.query}out center;`;
+  try {
+    const r = await fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST', body: 'data=' + encodeURIComponent(q)
+    });
+    const data = await r.json();
+    const grp = L.layerGroup();
+    data.elements.forEach(item => {
+      const lat = item.lat ?? item.center?.lat;
+      const lon = item.lon ?? item.center?.lon;
+      if (!lat || !lon) return;
+      const name = item.tags?.name || item.tags?.['name:en'] || cfg.label;
+      L.circleMarker([lat, lon], {
+        radius: cfg.radius, color: cfg.color, fillColor: cfg.color,
+        fillOpacity: 0.75, weight: 1.5, opacity: 1
+      }).bindPopup(`<b style="font-size:11px;font-family:'DM Mono',monospace">${name}</b>`).addTo(grp);
+    });
+    overlayLayers[type] = grp;
+    if (layerActive[type]) grp.addTo(map);
+    toast(`${cfg.label}: ${data.elements.length} loaded`);
+  } catch(e) {
+    toast('Failed to load ' + cfg.label);
+    layerActive[type] = false;
+    btn.classList.remove('active');
+  }
+  btn.textContent = cfg.btnLabel;
 }
 
 // ═══════════════════════════════════════════════════════
