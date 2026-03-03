@@ -1177,6 +1177,15 @@ async function toggleLayer(type) {
         });
         L.marker([lat, lon], { icon })
           .bindPopup(`<b style="font-size:11px;font-family:'DM Mono',monospace">${name}</b>`).addTo(grp);
+      } else if (type === 'school') {
+        const icon = L.divIcon({
+          className: '',
+          html: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="${cfg.color}"><path d="M12 3 1 9l11 6 9-4.91V17h2V9L12 3zm-7 9.17V16l7 4 7-4v-3.83l-7 3.83-7-3.83z"/></svg>`,
+          iconSize: [20, 20],
+          iconAnchor: [10, 10]
+        });
+        L.marker([lat, lon], { icon })
+          .bindPopup(`<b style="font-size:11px;font-family:'DM Mono',monospace">${name}</b>`).addTo(grp);
       } else {
         L.circleMarker([lat, lon], {
           radius: cfg.radius, color: cfg.color, fillColor: cfg.color,
