@@ -461,7 +461,7 @@ function parseRaw(raw) {
       };
     } else {
       return {
-        listingId: desc.projectId || `bto-${i}`,
+        listingId: desc.projectId ? `${desc.projectId}-${desc.flatType || 'all'}` : `bto-${i}`,
         type, lat, lng,
         address: desc.town || 'BTO Project',
         price: null,
