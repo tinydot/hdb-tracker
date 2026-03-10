@@ -135,6 +135,14 @@ input[type=range]{flex:1;accent-color:var(--resale);}
 .popup-history-row{display:flex;justify-content:space-between;font-size:10px;font-family:'DM Mono',monospace;margin-bottom:3px;color:var(--muted);}
 .popup-history-row .ph-price{color:var(--text);}
 
+/* ── STALENESS ── */
+.card-stale{display:flex;gap:5px;margin-top:3px;flex-wrap:wrap;}
+.card-stale-item{font-size:9px;font-family:'DM Mono',monospace;color:var(--muted);}
+.popup-staleness{margin-top:8px;border-top:1px solid var(--border);padding-top:8px;}
+.popup-staleness-title{font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px;}
+.popup-staleness-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:10px;font-family:'DM Mono',monospace;margin-bottom:3px;color:var(--muted);}
+.popup-staleness-row .ps-val{color:var(--text);text-align:right;}
+
 /* ── MAP LAYER TOGGLES ── */
 .layer-btns{display:flex;flex-direction:column;gap:3px;margin-top:2px;}
 .layer-btn{padding:3px 8px;border-radius:4px;font-size:9px;cursor:pointer;border:1px solid var(--border);color:var(--muted);background:transparent;transition:all .15s;user-select:none;text-align:center;white-space:nowrap;}
@@ -513,6 +521,9 @@ async function importData() {
         firstSeen: now,
         lastSeen: now,
         priceHistory: l.price ? [{ date: now, price: l.price }] : [],
+        lastPriceChange: null,
+        lastPriceChangeDiff: null,
+        lastPriceChangeFrom: null,
       });
       summary.newListings++;
 
@@ -520,6 +531,9 @@ async function importData() {
       // existing listing — check for price change
       let changeType = 'unchanged';
       const history = prev.priceHistory || [];
+      let lastPriceChange = prev.lastPriceChange || null;
+      let lastPriceChangeDiff = prev.lastPriceChangeDiff ?? null;
+      let lastPriceChangeFrom = prev.lastPriceChangeFrom ?? null;
 
       if (l.price !== null && prev.price !== null && l.price !== prev.price) {
         const diff = l.price - prev.price;
@@ -527,6 +541,9 @@ async function importData() {
         history.push({ date: now, price: l.price });
         changes.push({ ...l, prevPrice: prev.price, diff, changeType, history });
         if (diff < 0) summary.priceDrop++; else summary.priceRise++;
+        lastPriceChange = now;
+        lastPriceChangeDiff = diff;
+        lastPriceChangeFrom = prev.price;
       } else {
         summary.unchanged++;
         // check relisted
@@ -545,6 +562,9 @@ async function importData() {
         priceHistory: l.price && (history.length === 0 || history[history.length-1]?.price !== l.price)
           ? [...history, { date: now, price: l.price }]
           : history,
+        lastPriceChange,
+        lastPriceChangeDiff,
+        lastPriceChangeFrom,
       });
     }
   }
@@ -777,6 +797,8 @@ function makePopup(l) {
     historyHtml = `<div class="popup-history"><div class="popup-history-title">Price History</div>${rows}</div>`;
   }
 
+  const stalenessHtml = makeStalenessHtml(l);
+
   if (isBTO) {
     return `<div class="popup-badge ${badgeClass}">BTO · ${l.stage || '—'}</div>
       ${changePart}
@@ -787,7 +809,7 @@ function makePopup(l) {
         <div class="popup-item"><div class="popup-item-label">Ballot</div><div class="popup-item-val">${l.ballotQtr || '—'}</div></div>
         <div class="popup-item"><div class="popup-item-label">Launch</div><div class="popup-item-val">${l.launchDate || '—'}</div></div>
         <div class="popup-item"><div class="popup-item-label">Lease</div><div class="popup-item-val">${l.remainingLease}</div></div>
-      </div>${historyHtml}`;
+      </div>${stalenessHtml}${historyHtml}`;
   } else {
     const thumbHtml = l.photo
       ? `<div class="popup-thumb-wrap">
@@ -811,6 +833,7 @@ function makePopup(l) {
         <div class="popup-item"><div class="popup-item-label">Listed</div><div class="popup-item-val">${l.creationDate || '—'}</div></div>
         <div class="popup-item"><div class="popup-item-label">Status</div><div class="popup-item-val">${l.status === 'delisted' ? '⚠ Delisted' : 'Active'}</div></div>
       </div>
+      ${stalenessHtml}
       ${historyHtml}
       <a href="https://homes.hdb.gov.sg/home/resale/${l.listingId}" target="_blank" rel="noopener"
         style="display:flex;align-items:center;justify-content:center;gap:6px;margin-top:10px;padding:7px 10px;border-radius:5px;background:#daeeff;border:1px solid #a8d4f5;color:var(--resale);font-size:11px;font-family:'DM Mono',monospace;text-decoration:none;transition:background .15s;"
@@ -849,6 +872,18 @@ function renderList(data) {
     const prevBadge = l.changeType && l.changeType !== 'unchanged'
       ? changeBadgeHtml(l.changeType, l.price, l.prevPrice) : '';
 
+    const staleItems = [];
+    if (l.firstSeen) staleItems.push(`seen ${relTime(l.firstSeen)}`);
+    if (l.lastPriceChange) {
+      const diff = l.lastPriceChangeDiff;
+      const sign = diff > 0 ? '+' : '';
+      staleItems.push(`chg ${relTime(l.lastPriceChange)} (${sign}$${Math.abs(diff).toLocaleString()})`);
+    }
+    if (l.status === 'delisted' && l.lastSeen) staleItems.push(`last seen ${relTime(l.lastSeen)}`);
+    const staleHtml = staleItems.length
+      ? `<div class="card-stale">${staleItems.map(s => `<span class="card-stale-item">${s}</span>`).join('<span class="card-stale-item">·</span>')}</div>`
+      : '';
+
     return `<div class="listing-card${isDelist ? ' opacity-50' : ''}" id="card-${l.listingId}" onclick="focusListing('${l.listingId}')" style="${isDelist ? 'opacity:.55;' : ''}">
       <div class="card-top">
         <div class="card-price" style="color:${priceColor2}">${priceStr}</div>
@@ -859,8 +894,46 @@ function renderList(data) {
       </div>
       <div class="card-addr" title="${l.address}">${l.address}</div>
       <div class="card-meta">${meta.map(m => `<span>${m}</span>`).join('')}</div>
+      ${staleHtml}
     </div>`;
   }).join('');
+}
+
+function relTime(iso) {
+  if (!iso) return null;
+  const diff = Date.now() - new Date(iso).getTime();
+  const days = Math.floor(diff / 86400000);
+  if (days === 0) return 'today';
+  if (days === 1) return '1d ago';
+  if (days < 14) return `${days}d ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 8) return `${weeks}w ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
+}
+
+function fmtDate(iso) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleDateString('en-SG', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function makeStalenessHtml(l) {
+  const rows = [];
+  if (l.firstSeen) {
+    rows.push(`<div class="popup-staleness-row"><span>First seen</span><span class="ps-val">${fmtDate(l.firstSeen)} · ${relTime(l.firstSeen)}</span></div>`);
+  }
+  if (l.lastPriceChange) {
+    const diff = l.lastPriceChangeDiff;
+    const diffStr = diff != null ? `${diff > 0 ? '+' : ''}$${Math.abs(diff).toLocaleString()}` : '';
+    const diffColor = diff < 0 ? 'var(--drop)' : 'var(--rise)';
+    const fromStr = l.lastPriceChangeFrom != null ? `$${(+l.lastPriceChangeFrom).toLocaleString()} → ` : '';
+    rows.push(`<div class="popup-staleness-row"><span>Last price chg</span><span class="ps-val">${fmtDate(l.lastPriceChange)} · ${relTime(l.lastPriceChange)}<br><span style="color:${diffColor};font-weight:600">${fromStr}${diffStr}</span></span></div>`);
+  }
+  if (l.status === 'delisted' && l.lastSeen) {
+    rows.push(`<div class="popup-staleness-row"><span>Last seen</span><span class="ps-val">${fmtDate(l.lastSeen)} · ${relTime(l.lastSeen)}</span></div>`);
+  }
+  if (!rows.length) return '';
+  return `<div class="popup-staleness"><div class="popup-staleness-title">Tracking</div>${rows.join('')}</div>`;
 }
 
 function changeBadgeHtml(changeType, newPrice, prevPrice) {
