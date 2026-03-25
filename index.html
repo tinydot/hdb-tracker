@@ -248,7 +248,7 @@ input[type=range]{flex:1;accent-color:var(--resale);}
       <div>
         <div class="filter-label" style="display:flex;justify-content:space-between;align-items:center;">
           <span>Status</span>
-          <span id="hide-delisted-toggle" onclick="toggleHideDelisted()" style="font-size:9px;cursor:pointer;color:var(--muted);user-select:none;">Hide delisted</span>
+          <span id="hide-delisted-toggle" onclick="toggleHideDelisted()" style="font-size:9px;cursor:pointer;color:var(--accent);font-weight:600;user-select:none;">Hide delisted</span>
         </div>
         <div class="chips">
           <div class="chip active" data-val="all" onclick="setStatusFilter(this)">All</div>
@@ -401,7 +401,7 @@ function dbClear(storeName) {
 // ═══════════════════════════════════════════════════════
 let allListings = [];      // currently displayed (with change metadata)
 let activeMarkers = [];
-let filters = { type: 'Resale', maxPrice: 1500000, flats: new Set(['4-Room', '5-Room']), minLease: 65, regions: new Set(['NORTH REGION']), status: 'all', hideDelisted: false };
+let filters = { type: 'Resale', maxPrice: 1500000, flats: new Set(['4-Room', '5-Room']), minLease: 65, regions: new Set(['NORTH REGION']), status: 'all', hideDelisted: true };
 let currentTab = 'map';
 let selectedScrapeFile = null;
 
