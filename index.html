@@ -211,6 +211,7 @@ input[type=range]{flex:1;accent-color:var(--resale);}
       </div>
       <div class="btn-row" style="margin-top:4px;">
         <button id="fetch-api-btn" class="btn-primary" style="background:#1a7fe0;" onclick="fetchFromAPI()">Fetch from HDB API</button>
+        <button id="load-latest-btn" class="btn-secondary" onclick="fetchLatest()" title="Load data/hdb.json committed by the scheduled GitHub Action">Load Latest</button>
       </div>
     </div>
 
@@ -553,6 +554,29 @@ async function fetchFromAPI() {
       : ''));
   } finally {
     btn.textContent = 'Fetch from HDB API';
+    btn.disabled = false;
+  }
+}
+
+async function fetchLatest() {
+  const btn = document.getElementById('load-latest-btn');
+  btn.textContent = 'Loading…';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('./data/hdb.json');
+    if (!resp.ok) throw new Error(resp.status === 404
+      ? 'data/hdb.json not found yet — run the GitHub Action first'
+      : `HTTP ${resp.status}`);
+    const data = await resp.json();
+    const arr = Array.isArray(data) ? data : (data.result ?? data.data ?? data.listings ?? []);
+    if (!arr.length) throw new Error('No listings found in data/hdb.json');
+    const parsed = parseListings(arr);
+    if (!parsed.length) throw new Error('Could not parse listings from data/hdb.json');
+    await processImport(parsed);
+  } catch (e) {
+    alert('Load failed: ' + e.message);
+  } finally {
+    btn.textContent = 'Load Latest';
     btn.disabled = false;
   }
 }
