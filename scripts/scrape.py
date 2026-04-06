@@ -1,132 +1,138 @@
 #!/usr/bin/env python3
 """
-Fetches HDB listing data from the public API.
+Fetches HDB listing data by launching a headless browser, visiting the
+finding-a-flat page, and intercepting the API response the page makes
+itself. This handles QueueIT, IAM redirects, and JS-set cookies
+automatically — no manual cookie management needed.
 
-The HDB API requires a browser session cookie (including the QueueIT
-acceptance cookie and HH02 session token set by JavaScript). A plain
-HTTP GET to the page cannot collect these — they must come from a real
-browser visit.
+Requirements:
+  pip install playwright
+  playwright install chromium
 
-Cookie source (first match wins):
-  1. HDB_COOKIE environment variable  (used by GitHub Actions)
-  2. data/.cookie file                (convenient for local use)
+Usage:
+  python3 scripts/scrape.py
 
-To get the cookie string:
-  1. Open Chrome → https://homes.hdb.gov.sg/home/finding-a-flat
-  2. DevTools (F12) → Network tab → find any getCoordinatesByFilters request
-  3. In the request headers, copy the full value of the "cookie:" header
-  4. Paste it into data/.cookie  (local)  or  HDB_COOKIE secret  (GH Actions)
+Automate with Windows Task Scheduler (run daily):
+  Action: python3 C:\path\to\hdb-tracker\scripts\scrape.py
 """
+import asyncio
 import json
 import os
-import re
+import subprocess
 import sys
-import requests
+
+try:
+    from playwright.async_api import async_playwright, TimeoutError as PWTimeout
+except ImportError:
+    print("ERROR: Playwright is not installed.\nRun: pip install playwright && playwright install chromium")
+    sys.exit(1)
 
 PAGE_URL = "https://homes.hdb.gov.sg/home/finding-a-flat"
-API_URL  = "https://homes.hdb.gov.sg/home-api/public/v1/map/getCoordinatesByFilters"
-COOKIE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", ".cookie")
-
-PAYLOAD = {
-    "location": "", "coordinates": [["", ""]], "range": "2",
-    "priceRangeLower": "0", "priceRangeUpper": "0", "flatType": "",
-    "waitingTime": "", "modeOfSale": "", "floorRange": "",
-    "remainingLeaseRangeLower": 1, "remainingLeaseRangeUpper": 99,
-    "ethnicGroup": "", "citizenship": "", "extension": "", "contra": "",
-    "rank": "Location, Price Range, Flat Type, Remaining Lease",
-    "salesPerson": False, "town": "", "classification": "",
-}
+API_PATH = "getCoordinatesByFilters"
+OUT_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "hdb.json")
 
 
-def get_cookie():
-    """Load cookie string from env var or local file."""
-    cookie = os.environ.get("HDB_COOKIE", "").strip()
-    if cookie:
-        print("Using cookie from HDB_COOKIE environment variable")
-        return cookie
-    cookie_path = os.path.abspath(COOKIE_FILE)
-    if os.path.exists(cookie_path):
-        cookie = open(cookie_path).read().strip()
-        if cookie:
-            print(f"Using cookie from {cookie_path}")
-            return cookie
-    return None
+async def scrape():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            )
+        )
+        page = await context.new_page()
+
+        captured = []
+        done = asyncio.Event()
+
+        async def on_response(response):
+            if API_PATH in response.url:
+                try:
+                    data = await response.json()
+                    listings = data if isinstance(data, list) else []
+                    if listings:
+                        captured.extend(listings)
+                        print(f"  Captured {len(listings)} listings from API")
+                        done.set()
+                except Exception as e:
+                    print(f"  Warning: could not parse API response: {e}")
+
+        page.on("response", on_response)
+
+        print(f"Launching browser → {PAGE_URL}")
+        try:
+            await page.goto(PAGE_URL, timeout=120_000, wait_until="domcontentloaded")
+        except PWTimeout:
+            print("ERROR: Timed out loading the page (QueueIT may have a long wait).")
+            await browser.close()
+            sys.exit(1)
+
+        # Check if we got stuck in the QueueIT waiting room
+        if "queue-it.net" in page.url:
+            print("ERROR: Stuck in QueueIT waiting room — the site is under load. Try again later.")
+            await browser.close()
+            sys.exit(1)
+
+        # Wait up to 30s for the API call to be intercepted
+        print("Waiting for API call…")
+        try:
+            await asyncio.wait_for(done.wait(), timeout=30)
+        except asyncio.TimeoutError:
+            print(
+                "ERROR: Page loaded but no API call was intercepted within 30s.\n"
+                "The page layout may have changed or the map didn't initialise."
+            )
+            await browser.close()
+            sys.exit(1)
+
+        await browser.close()
+
+    return captured
 
 
-def extract_session_id(cookie_str):
-    """Extract HH02 value from cookie string to use as the sessionid header."""
-    m = re.search(r'(?:^|;\s*)HH02=([^\s;]+)', cookie_str)
-    return m.group(1) if m else None
+def git_push(out_file):
+    repo = os.path.dirname(os.path.abspath(out_file))
+    # Walk up to find repo root (where .git lives)
+    path = os.path.abspath(out_file)
+    while path != os.path.dirname(path):
+        if os.path.isdir(os.path.join(path, ".git")):
+            repo = path
+            break
+        path = os.path.dirname(path)
+
+    def run(cmd):
+        result = subprocess.run(cmd, cwd=repo, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"  git error: {result.stderr.strip()}")
+        else:
+            print(f"  {result.stdout.strip() or cmd[-1]}")
+        return result.returncode
+
+    print("Committing and pushing…")
+    run(["git", "add", "data/hdb.json"])
+    rc = run(["git", "commit", "-m", f"chore: update HDB listings data"])
+    if rc == 0:
+        run(["git", "push"])
+    else:
+        print("  Nothing to commit (data unchanged)")
 
 
 def main():
-    cookie = get_cookie()
-    if not cookie:
-        print(
-            "ERROR: No cookie found.\n\n"
-            "The HDB API requires a browser session cookie that includes\n"
-            "the QueueIT token and HH02 session value (set by JavaScript).\n\n"
-            "To fix:\n"
-            "  1. Open https://homes.hdb.gov.sg/home/finding-a-flat in Chrome\n"
-            "  2. DevTools → Network → any getCoordinatesByFilters request\n"
-            "  3. Copy the full 'cookie:' request header value\n\n"
-            "  Local use:  paste into  data/.cookie\n"
-            "  GitHub Actions:  repo Settings → Secrets → Actions\n"
-            "                   Name: HDB_COOKIE  Value: <paste>\n"
-        )
-        sys.exit(1)
-
-    session_id = extract_session_id(cookie)
-    if session_id:
-        print(f"Extracted sessionid from HH02: {session_id[:20]}…")
-    else:
-        print("Warning: HH02 cookie not found — sessionid header will be omitted")
-
-    session = requests.Session()
-    headers = {
-        "accept": "application/json, text/plain, */*",
-        "accept-language": "en-US,en;q=0.9",
-        "content-type": "application/json",
-        "cookie": cookie,
-        "origin": PAGE_URL.rsplit("/", 1)[0],
-        "referer": PAGE_URL,
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "skip-redirect": "1",
-        "user-agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-    }
-    if session_id:
-        headers["sessionid"] = session_id
-
-    print(f"POST {API_URL}")
-    resp = session.post(API_URL, headers=headers, json=PAYLOAD, timeout=30)
-
-    if resp.status_code == 400:
-        print(
-            f"ERROR: 400 Bad Request — cookie is likely expired.\n"
-            f"Refresh it by repeating the steps above and updating\n"
-            f"data/.cookie or the HDB_COOKIE secret."
-        )
-        sys.exit(1)
-
-    resp.raise_for_status()
-    data = resp.json()
-    listings = data if isinstance(data, list) else []
-    print(f"  → {len(listings)} listings")
+    listings = asyncio.run(scrape())
 
     if not listings:
-        print("ERROR: API returned 0 listings. Cookie may be expired.")
+        print("ERROR: No listings captured.")
         sys.exit(1)
 
-    out = os.path.join(os.path.dirname(__file__), "..", "data", "hdb.json")
+    out = os.path.abspath(OUT_FILE)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w") as f:
         json.dump(listings, f)
-    print(f"Saved {len(listings)} listings → {os.path.abspath(out)}")
+    print(f"Saved {len(listings)} listings → {out}")
+
+    git_push(out)
 
 
 if __name__ == "__main__":
