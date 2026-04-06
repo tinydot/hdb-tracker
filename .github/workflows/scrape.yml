@@ -14,40 +14,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch HDB API data
-        env:
-          HDB_COOKIE: ${{ secrets.HDB_COOKIE }}
-        run: |
-          mkdir -p data
-          curl -sf \
-            -H "accept: application/json, text/plain, */*" \
-            -H "content-type: application/json" \
-            -H "origin: https://homes.hdb.gov.sg" \
-            -H "referer: https://homes.hdb.gov.sg/home/finding-a-flat" \
-            -H "skip-redirect: 1" \
-            -H "user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
-            ${HDB_COOKIE:+-H "cookie: $HDB_COOKIE"} \
-            -X POST \
-            --data-raw '{"location":"","coordinates":[["",""]],"range":"2","priceRangeLower":"0","priceRangeUpper":"0","flatType":"","waitingTime":"","modeOfSale":"","floorRange":"","remainingLeaseRangeLower":1,"remainingLeaseRangeUpper":99,"ethnicGroup":"","citizenship":"","extension":"","contra":"","rank":"Location, Price Range, Flat Type, Remaining Lease","salesPerson":false,"town":"","classification":""}' \
-            https://homes.hdb.gov.sg/home-api/public/v1/map/getCoordinatesByFilters \
-            -o data/hdb.json
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-          BYTES=$(wc -c < data/hdb.json)
-          echo "Fetched $BYTES bytes"
+      - name: Install dependencies
+        run: pip install requests
 
-          # Validate we got real JSON data (not empty or an error page)
-          if [ "$BYTES" -lt 100 ]; then
-            echo "ERROR: Response too small ($BYTES bytes). The HDB_COOKIE secret may be missing or expired."
-            echo "Go to repo Settings → Secrets → Actions and set HDB_COOKIE to your browser session cookie."
-            cat data/hdb.json
-            exit 1
-          fi
-
-          if ! python3 -c "import json,sys; d=json.load(open('data/hdb.json')); print(f'Parsed OK: {len(d) if isinstance(d,list) else \"object\"} items')"; then
-            echo "ERROR: Response is not valid JSON. Cookie may have expired or QueueIT is blocking the request."
-            head -c 500 data/hdb.json
-            exit 1
-          fi
+      - name: Fetch HDB listings
+        run: python3 scripts/scrape.py
 
       - name: Commit if changed
         run: |
