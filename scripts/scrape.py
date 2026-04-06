@@ -160,6 +160,10 @@ def attempt_stored_cookie():
 
 # ── Git push ───────────────────────────────────────────────────────────────────
 def git_push():
+    # In GitHub Actions the workflow's "Commit if changed" step handles this
+    if os.environ.get("CI"):
+        print("CI environment detected — skipping git push (workflow handles it)")
+        return
     repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     def run(cmd):
         r = subprocess.run(cmd, cwd=repo, capture_output=True, text=True)
