@@ -2,13 +2,22 @@
 """
 Fetches HDB listing data from the public API.
 
-Flow:
-  1. GET the finding-a-flat page so requests follows any QueueIT redirects
-     and collects session cookies automatically.
-  2. POST to the API with those cookies.
-  3. Validate and save to data/hdb.json.
+Two modes:
+  - With HDB_COOKIE env var set (GitHub Actions): uses that cookie string
+    directly, skipping the page visit. Needed because the Singapore IAM
+    service geo-blocks non-SG IPs (e.g. GitHub's servers).
+  - Without HDB_COOKIE (running locally from a SG IP): visits the page
+    first so requests follows the IAM/QueueIT redirect chain and collects
+    session cookies automatically.
+
+To get the cookie value:
+  1. Open Chrome → https://homes.hdb.gov.sg/home/finding-a-flat
+  2. DevTools → Network → any getCoordinatesByFilters request
+  3. Copy the full "cookie:" request header value
+  4. Store it as a GitHub Actions secret named HDB_COOKIE
 """
 import json
+import os
 import sys
 import requests
 
@@ -35,19 +44,17 @@ BROWSER_HEADERS = {
 }
 
 
-def call_api(session):
-    resp = session.post(
-        API_URL,
-        headers={
-            "accept": "application/json, text/plain, */*",
-            "content-type": "application/json",
-            "origin": "https://homes.hdb.gov.sg",
-            "referer": PAGE_URL,
-            "skip-redirect": "1",
-        },
-        json=PAYLOAD,
-        timeout=30,
-    )
+def call_api(session, extra_headers=None):
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "content-type": "application/json",
+        "origin": "https://homes.hdb.gov.sg",
+        "referer": PAGE_URL,
+        "skip-redirect": "1",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
+    resp = session.post(API_URL, headers=headers, json=PAYLOAD, timeout=30)
     resp.raise_for_status()
     data = resp.json()
     return data if isinstance(data, list) else []
@@ -57,30 +64,43 @@ def main():
     session = requests.Session()
     session.headers.update(BROWSER_HEADERS)
 
-    # Visit the page first — requests follows QueueIT redirects automatically
-    # and stores all resulting cookies in the session.
-    print(f"GET {PAGE_URL}")
-    page_resp = session.get(PAGE_URL, timeout=60)
-    print(f"  → {page_resp.status_code} (final URL: {page_resp.url})")
-    print(f"  → cookies: {list(session.cookies.keys())}")
+    hdb_cookie = os.environ.get("HDB_COOKIE", "").strip()
 
-    if "queue-it.net" in page_resp.url:
-        print(
-            "ERROR: Landed on QueueIT waiting room — queue is not empty.\n"
-            "The site is under load. Try running the workflow again later."
-        )
-        sys.exit(1)
+    if hdb_cookie:
+        # ── GitHub Actions mode: use stored cookie ──────────────────────────
+        print("HDB_COOKIE is set — using it directly (skipping page visit)")
+        listings = call_api(session, extra_headers={"cookie": hdb_cookie})
+    else:
+        # ── Local mode: visit the page to collect cookies via redirects ─────
+        print(f"No HDB_COOKIE set — visiting page to collect session cookies")
+        print(f"GET {PAGE_URL}")
+        page_resp = session.get(PAGE_URL, timeout=60)
+        print(f"  → {page_resp.status_code} (final URL: {page_resp.url})")
+        print(f"  → cookies collected: {list(session.cookies.keys())}")
 
-    print(f"POST {API_URL}")
-    listings = call_api(session)
+        if "iam.hdb.gov.sg" in page_resp.url and page_resp.status_code == 403:
+            print(
+                "\nERROR: Blocked by Singapore IAM service (403).\n"
+                "This usually means the script is running from a non-Singapore IP.\n\n"
+                "Fix: add your browser cookie as a GitHub Actions secret:\n"
+                "  1. Open https://homes.hdb.gov.sg/home/finding-a-flat in Chrome\n"
+                "  2. DevTools → Network → any getCoordinatesByFilters request\n"
+                "  3. Copy the full 'cookie:' header value\n"
+                "  4. Repo Settings → Secrets → Actions → New secret\n"
+                "     Name: HDB_COOKIE  Value: <paste cookie string>\n"
+            )
+            sys.exit(1)
+
+        if "queue-it.net" in page_resp.url:
+            print("ERROR: Stuck in QueueIT waiting room — try again later.")
+            sys.exit(1)
+
+        listings = call_api(session)
+
     print(f"  → {len(listings)} listings")
 
     if not listings:
-        print(
-            "ERROR: API returned 0 listings.\n"
-            "The session may not have passed QueueIT validation.\n"
-            "Response cookies: " + str(list(session.cookies.keys()))
-        )
+        print("ERROR: API returned 0 listings. Cookie may be expired.")
         sys.exit(1)
 
     out = "data/hdb.json"
