@@ -14,17 +14,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch HDB API data
-        run: |
-          mkdir -p data
-          curl -sf \
-            -H "accept: application/json, text/plain, */*" \
-            -H "content-type: application/json" \
-            -X POST \
-            --data-raw '{"location":"","coordinates":[["",""]],"range":"2","priceRangeLower":"0","priceRangeUpper":"0","flatType":"","waitingTime":"","modeOfSale":"","floorRange":"","remainingLeaseRangeLower":1,"remainingLeaseRangeUpper":99,"ethnicGroup":"","citizenship":"","extension":"","contra":"","rank":"Location, Price Range, Flat Type, Remaining Lease","salesPerson":false,"town":"","classification":""}' \
-            https://homes.hdb.gov.sg/home-api/public/v1/map/getCoordinatesByFilters \
-            -o data/hdb.json
-          echo "Fetched $(wc -c < data/hdb.json) bytes"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Fetch HDB listings
+        run: python3 scripts/scrape.py
 
       - name: Commit if changed
         run: |
