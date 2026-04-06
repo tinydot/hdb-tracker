@@ -1,38 +1,26 @@
 name: Fetch HDB Listings
 
+# Runs on a self-hosted runner (must be a Singapore-IP machine).
+# GitHub-hosted runners are geo-blocked by the HDB IAM service.
+#
+# To set up a self-hosted runner on your Windows PC:
+#   Repo → Settings → Actions → Runners → New self-hosted runner
+#
+# Alternatively, run scripts/scrape.py directly via Windows Task Scheduler.
+
 on:
   schedule:
     - cron: '0 22 * * *'  # Daily at 6 AM SGT (UTC+8)
-  workflow_dispatch:       # Allow manual trigger from Actions tab
-
-permissions:
-  contents: write
+  workflow_dispatch:
 
 jobs:
   fetch:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted   # <-- change to ubuntu-latest if using a SG VPS runner
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
       - name: Install dependencies
-        run: pip install requests
+        run: pip install -r scripts/requirements.txt && playwright install chromium
 
       - name: Fetch HDB listings
         run: python3 scripts/scrape.py
-
-      - name: Commit if changed
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/hdb.json
-          if ! git diff --staged --quiet; then
-            git commit -m "chore: update HDB listings data $(date -u '+%Y-%m-%d')"
-            git push
-          else
-            echo "No changes to commit"
-          fi
