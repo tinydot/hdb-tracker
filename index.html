@@ -204,6 +204,14 @@ input[type=range]{flex:1;accent-color:var(--resale);}
         <button class="btn-secondary" onclick="loadSample()">Sample</button>
         <button class="btn-ghost" onclick="clearView()">Clear View</button>
       </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+        <div style="flex:1;height:1px;background:var(--border);"></div>
+        <span style="font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;white-space:nowrap;">OR</span>
+        <div style="flex:1;height:1px;background:var(--border);"></div>
+      </div>
+      <div class="btn-row" style="margin-top:4px;">
+        <button id="fetch-api-btn" class="btn-primary" style="background:#1a7fe0;" onclick="fetchFromAPI()">Fetch from HDB API</button>
+      </div>
     </div>
 
     <div class="filter-bar">
@@ -447,8 +455,7 @@ function onScrapeFileChange(input) {
 // ═══════════════════════════════════════════════════════
 // PARSE SCRAPED JSON → normalised listing objects
 // ═══════════════════════════════════════════════════════
-function parseRaw(raw) {
-  const arr = JSON.parse(raw);
+function parseListings(arr) {
   return arr.map((item, i) => {
     let lat, lng;
     try { [lat, lng] = JSON.parse(item.coordinates); } catch(e) { return null; }
@@ -487,6 +494,10 @@ function parseRaw(raw) {
   }).filter(Boolean);
 }
 
+function parseRaw(raw) {
+  return parseListings(JSON.parse(raw));
+}
+
 // ═══════════════════════════════════════════════════════
 // IMPORT: parse → diff against DB → save → render
 // ═══════════════════════════════════════════════════════
@@ -501,6 +512,52 @@ async function importData() {
   try { parsed = parseRaw(raw); }
   catch(e) { alert('Parse error: ' + e.message); return; }
 
+  await processImport(parsed);
+}
+
+async function fetchFromAPI() {
+  const btn = document.getElementById('fetch-api-btn');
+  btn.textContent = 'Fetching…';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('https://homes.hdb.gov.sg/home-api/public/v1/map/getCoordinatesByFilters', {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json, text/plain, */*',
+        'content-type': 'application/json',
+        'origin': 'https://homes.hdb.gov.sg',
+        'referer': 'https://homes.hdb.gov.sg/home/finding-a-flat',
+        'skip-redirect': '1',
+      },
+      credentials: 'include',
+      body: JSON.stringify({
+        location: '', coordinates: [['', '']], range: '2',
+        priceRangeLower: '0', priceRangeUpper: '0', flatType: '',
+        waitingTime: '', modeOfSale: '', floorRange: '',
+        remainingLeaseRangeLower: 1, remainingLeaseRangeUpper: 99,
+        ethnicGroup: '', citizenship: '', extension: '', contra: '',
+        rank: 'Location, Price Range, Flat Type, Remaining Lease',
+        salesPerson: false, town: '', classification: '',
+      }),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    const data = await resp.json();
+    const arr = Array.isArray(data) ? data : (data.result ?? data.data ?? data.listings ?? []);
+    if (!arr.length) throw new Error('API returned 0 listings');
+    const parsed = parseListings(arr);
+    if (!parsed.length) throw new Error('Could not parse any listings from API response');
+    await processImport(parsed);
+  } catch (e) {
+    alert('API fetch failed: ' + e.message + (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')
+      ? '\n\nThis is likely a CORS error. The HDB API only allows requests from homes.hdb.gov.sg. You need to be on that domain or use a browser extension that bypasses CORS.'
+      : ''));
+  } finally {
+    btn.textContent = 'Fetch from HDB API';
+    btn.disabled = false;
+  }
+}
+
+async function processImport(parsed) {
   const now = new Date().toISOString();
   const incomingIds = new Set(parsed.map(l => l.listingId));
 
