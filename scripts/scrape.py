@@ -2,27 +2,30 @@
 """
 Fetches HDB listing data from the public API.
 
-Two modes:
-  - With HDB_COOKIE env var set (GitHub Actions): uses that cookie string
-    directly, skipping the page visit. Needed because the Singapore IAM
-    service geo-blocks non-SG IPs (e.g. GitHub's servers).
-  - Without HDB_COOKIE (running locally from a SG IP): visits the page
-    first so requests follows the IAM/QueueIT redirect chain and collects
-    session cookies automatically.
+The HDB API requires a browser session cookie (including the QueueIT
+acceptance cookie and HH02 session token set by JavaScript). A plain
+HTTP GET to the page cannot collect these — they must come from a real
+browser visit.
 
-To get the cookie value:
+Cookie source (first match wins):
+  1. HDB_COOKIE environment variable  (used by GitHub Actions)
+  2. data/.cookie file                (convenient for local use)
+
+To get the cookie string:
   1. Open Chrome → https://homes.hdb.gov.sg/home/finding-a-flat
-  2. DevTools → Network → any getCoordinatesByFilters request
-  3. Copy the full "cookie:" request header value
-  4. Store it as a GitHub Actions secret named HDB_COOKIE
+  2. DevTools (F12) → Network tab → find any getCoordinatesByFilters request
+  3. In the request headers, copy the full value of the "cookie:" header
+  4. Paste it into data/.cookie  (local)  or  HDB_COOKIE secret  (GH Actions)
 """
 import json
 import os
+import re
 import sys
 import requests
 
 PAGE_URL = "https://homes.hdb.gov.sg/home/finding-a-flat"
 API_URL  = "https://homes.hdb.gov.sg/home-api/public/v1/map/getCoordinatesByFilters"
+COOKIE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", ".cookie")
 
 PAYLOAD = {
     "location": "", "coordinates": [["", ""]], "range": "2",
@@ -34,79 +37,96 @@ PAYLOAD = {
     "salesPerson": False, "town": "", "classification": "",
 }
 
-BROWSER_HEADERS = {
-    "user-agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "accept-language": "en-US,en;q=0.9",
-}
+
+def get_cookie():
+    """Load cookie string from env var or local file."""
+    cookie = os.environ.get("HDB_COOKIE", "").strip()
+    if cookie:
+        print("Using cookie from HDB_COOKIE environment variable")
+        return cookie
+    cookie_path = os.path.abspath(COOKIE_FILE)
+    if os.path.exists(cookie_path):
+        cookie = open(cookie_path).read().strip()
+        if cookie:
+            print(f"Using cookie from {cookie_path}")
+            return cookie
+    return None
 
 
-def call_api(session, extra_headers=None):
-    headers = {
-        "accept": "application/json, text/plain, */*",
-        "content-type": "application/json",
-        "origin": "https://homes.hdb.gov.sg",
-        "referer": PAGE_URL,
-        "skip-redirect": "1",
-    }
-    if extra_headers:
-        headers.update(extra_headers)
-    resp = session.post(API_URL, headers=headers, json=PAYLOAD, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    return data if isinstance(data, list) else []
+def extract_session_id(cookie_str):
+    """Extract HH02 value from cookie string to use as the sessionid header."""
+    m = re.search(r'(?:^|;\s*)HH02=([^\s;]+)', cookie_str)
+    return m.group(1) if m else None
 
 
 def main():
-    session = requests.Session()
-    session.headers.update(BROWSER_HEADERS)
+    cookie = get_cookie()
+    if not cookie:
+        print(
+            "ERROR: No cookie found.\n\n"
+            "The HDB API requires a browser session cookie that includes\n"
+            "the QueueIT token and HH02 session value (set by JavaScript).\n\n"
+            "To fix:\n"
+            "  1. Open https://homes.hdb.gov.sg/home/finding-a-flat in Chrome\n"
+            "  2. DevTools → Network → any getCoordinatesByFilters request\n"
+            "  3. Copy the full 'cookie:' request header value\n\n"
+            "  Local use:  paste into  data/.cookie\n"
+            "  GitHub Actions:  repo Settings → Secrets → Actions\n"
+            "                   Name: HDB_COOKIE  Value: <paste>\n"
+        )
+        sys.exit(1)
 
-    hdb_cookie = os.environ.get("HDB_COOKIE", "").strip()
-
-    if hdb_cookie:
-        # ── GitHub Actions mode: use stored cookie ──────────────────────────
-        print("HDB_COOKIE is set — using it directly (skipping page visit)")
-        listings = call_api(session, extra_headers={"cookie": hdb_cookie})
+    session_id = extract_session_id(cookie)
+    if session_id:
+        print(f"Extracted sessionid from HH02: {session_id[:20]}…")
     else:
-        # ── Local mode: visit the page to collect cookies via redirects ─────
-        print(f"No HDB_COOKIE set — visiting page to collect session cookies")
-        print(f"GET {PAGE_URL}")
-        page_resp = session.get(PAGE_URL, timeout=60)
-        print(f"  → {page_resp.status_code} (final URL: {page_resp.url})")
-        print(f"  → cookies collected: {list(session.cookies.keys())}")
+        print("Warning: HH02 cookie not found — sessionid header will be omitted")
 
-        if "iam.hdb.gov.sg" in page_resp.url and page_resp.status_code == 403:
-            print(
-                "\nERROR: Blocked by Singapore IAM service (403).\n"
-                "This usually means the script is running from a non-Singapore IP.\n\n"
-                "Fix: add your browser cookie as a GitHub Actions secret:\n"
-                "  1. Open https://homes.hdb.gov.sg/home/finding-a-flat in Chrome\n"
-                "  2. DevTools → Network → any getCoordinatesByFilters request\n"
-                "  3. Copy the full 'cookie:' header value\n"
-                "  4. Repo Settings → Secrets → Actions → New secret\n"
-                "     Name: HDB_COOKIE  Value: <paste cookie string>\n"
-            )
-            sys.exit(1)
+    session = requests.Session()
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US,en;q=0.9",
+        "content-type": "application/json",
+        "cookie": cookie,
+        "origin": PAGE_URL.rsplit("/", 1)[0],
+        "referer": PAGE_URL,
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "skip-redirect": "1",
+        "user-agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+    }
+    if session_id:
+        headers["sessionid"] = session_id
 
-        if "queue-it.net" in page_resp.url:
-            print("ERROR: Stuck in QueueIT waiting room — try again later.")
-            sys.exit(1)
+    print(f"POST {API_URL}")
+    resp = session.post(API_URL, headers=headers, json=PAYLOAD, timeout=30)
 
-        listings = call_api(session)
+    if resp.status_code == 400:
+        print(
+            f"ERROR: 400 Bad Request — cookie is likely expired.\n"
+            f"Refresh it by repeating the steps above and updating\n"
+            f"data/.cookie or the HDB_COOKIE secret."
+        )
+        sys.exit(1)
 
+    resp.raise_for_status()
+    data = resp.json()
+    listings = data if isinstance(data, list) else []
     print(f"  → {len(listings)} listings")
 
     if not listings:
         print("ERROR: API returned 0 listings. Cookie may be expired.")
         sys.exit(1)
 
-    out = "data/hdb.json"
+    out = os.path.join(os.path.dirname(__file__), "..", "data", "hdb.json")
     with open(out, "w") as f:
         json.dump(listings, f)
-    print(f"Saved {len(listings)} listings → {out}")
+    print(f"Saved {len(listings)} listings → {os.path.abspath(out)}")
 
 
 if __name__ == "__main__":

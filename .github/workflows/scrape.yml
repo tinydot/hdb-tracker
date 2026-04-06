@@ -22,18 +22,6 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - name: Check HDB_COOKIE secret
-        run: |
-          if [ -z "${{ secrets.HDB_COOKIE }}" ]; then
-            echo "::warning::HDB_COOKIE secret is not set."
-            echo "GitHub Actions servers are outside Singapore and are geo-blocked by the HDB IAM service."
-            echo "The script will likely fail. To fix:"
-            echo "  1. Open https://homes.hdb.gov.sg/home/finding-a-flat in Chrome"
-            echo "  2. DevTools → Network → any getCoordinatesByFilters request"
-            echo "  3. Copy the full 'cookie:' header value"
-            echo "  4. Repo Settings → Secrets → Actions → New secret: HDB_COOKIE"
-          fi
-
       - name: Fetch HDB listings
         env:
           HDB_COOKIE: ${{ secrets.HDB_COOKIE }}
