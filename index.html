@@ -558,12 +558,22 @@ async function fetchFromAPI() {
   }
 }
 
+function getLatestDataUrl() {
+  const h = location.hostname;
+  if (h.endsWith('.github.io')) {
+    const user = h.replace('.github.io', '');
+    const repo = location.pathname.split('/').filter(Boolean)[0] || '';
+    return `https://raw.githubusercontent.com/${user}/${repo}/main/data/hdb.json?_=${Date.now()}`;
+  }
+  return `./data/hdb.json?_=${Date.now()}`;
+}
+
 async function fetchLatest() {
   const btn = document.getElementById('load-latest-btn');
   btn.textContent = 'Loading…';
   btn.disabled = true;
   try {
-    const resp = await fetch(`./data/hdb.json?_=${Date.now()}`, { cache: 'no-store' });
+    const resp = await fetch(getLatestDataUrl(), { cache: 'no-store' });
     if (!resp.ok) throw new Error(resp.status === 404
       ? 'data/hdb.json not found yet — run the GitHub Action first'
       : `HTTP ${resp.status}`);
