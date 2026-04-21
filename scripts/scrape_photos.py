@@ -7,7 +7,7 @@ import requests
 LISTING_ID = 38260
 CDN_BASE = "https://resources.homes.hdb.gov.sg"
 API_BASE = "https://homes.hdb.gov.sg"
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "photos")
 
 
 def fetch_image_paths(session: requests.Session, listing_id: int) -> list[str]:
