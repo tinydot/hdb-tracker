@@ -5,14 +5,31 @@ End-to-end: bring up a Gemma-on-Ollama host, scrape HDB listing photos, label th
 ## 1. Prerequisites on the remote host
 
 - NVIDIA driver installed (`nvidia-smi` works)
-- Python 3.10+
-- `git`, `curl`
+- Python 3.10+ (on Windows: install from python.org with "Add to PATH")
+- `git` and — on Linux — `curl`; on Windows, PowerShell 5.1+ (preinstalled) or PowerShell 7
 
 Tested on dual RTX 4500 Ada (48 GB total). A single RTX 4500 Ada (24 GB) is enough for `gemma4:31b` (Dense) at Q4.
 
-> **Ollama tag**: the scripts default to `gemma4:31b`. Confirm the exact tag on your Ollama version (`ollama search gemma4`) — variants may be published as `gemma4:31b`, `gemma4:31b-dense`, `gemma4:26b` (MoE), `gemma4:e4b`, or `gemma4:e2b`. Override with `--model` / the `MODEL` env var.
+> **Ollama tag**: the scripts default to `gemma4:31b`. Confirm the exact tag on your Ollama version (`ollama search gemma4`) — variants may be published as `gemma4:31b`, `gemma4:31b-dense`, `gemma4:26b` (MoE), `gemma4:e4b`, or `gemma4:e2b`. Override with `--model` / the `MODEL` / `-Model` argument.
 
 ## 2. Clone and bootstrap
+
+### Windows (PowerShell)
+
+```powershell
+git clone https://github.com/tinydot/hdb-tracker.git
+cd hdb-tracker
+powershell -ExecutionPolicy Bypass -File scripts\setup_gemma_host.ps1
+```
+
+Single-GPU host, or pick a different model:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup_gemma_host.ps1 -Gpus 0
+powershell -ExecutionPolicy Bypass -File scripts\setup_gemma_host.ps1 -Model gemma4:26b
+```
+
+### Linux (bash)
 
 ```bash
 git clone https://github.com/tinydot/hdb-tracker.git
@@ -20,21 +37,24 @@ cd hdb-tracker
 bash scripts/setup_gemma_host.sh
 ```
 
-This installs Ollama (if missing), starts **one `ollama serve` per GPU** (pinned with `CUDA_VISIBLE_DEVICES`, on ports `11434` and `11435`), pulls `gemma4:31b` (Dense) into each, and installs Python deps. The script prints the exact `--hosts` flag to pass the labeler.
-
-Single-GPU host? Override:
+Single-GPU host, or pick a different model:
 
 ```bash
-GPUS=0 bash scripts/setup_gemma_host.sh
-```
-
-Override the model — e.g. the MoE variant for better throughput, or an edge variant for a low-VRAM host:
-
-```bash
+GPUS=0            bash scripts/setup_gemma_host.sh
 MODEL=gemma4:26b  bash scripts/setup_gemma_host.sh   # 26B MoE
 MODEL=gemma4:e4b  bash scripts/setup_gemma_host.sh   # edge, ~4B-effective
 MODEL=gemma4:e2b  bash scripts/setup_gemma_host.sh   # edge, ~2B-effective
 ```
+
+### What the bootstrap does (both platforms)
+
+1. Checks `nvidia-smi` and `python`.
+2. Installs Ollama if missing (Windows: silent `OllamaSetup.exe`; Linux: official install script).
+3. Stops any existing Ollama processes (Windows also kills the tray app).
+4. Starts **one `ollama serve` per GPU**, each pinned with `CUDA_VISIBLE_DEVICES`, on ports `11434` and `11435`, with `OLLAMA_KEEP_ALIVE=24h`.
+5. Pulls the model into each instance.
+6. Installs Python deps.
+7. Prints the exact `--hosts` line to pass to the labeler.
 
 ## 3. Scrape listing photos
 
@@ -50,13 +70,21 @@ Photos land in `data/<listing_id>/`.
 
 ## 4. Label with Gemma
 
-To label across **both GPUs in parallel**, point the labeler at both Ollama instances (one per GPU). The setup script prints these URLs; you can also set them once via env var:
+To label across **both GPUs in parallel**, point the labeler at both Ollama instances (one per GPU). The setup script prints these URLs; you can also set them once via env var.
+
+Linux / macOS:
 
 ```bash
 export OLLAMA_HOSTS="http://127.0.0.1:11434,http://127.0.0.1:11435"
 ```
 
-Then:
+Windows (PowerShell):
+
+```powershell
+$env:OLLAMA_HOSTS = "http://127.0.0.1:11434,http://127.0.0.1:11435"
+```
+
+Then (use `python` on Windows, `python3` on Linux):
 
 ```bash
 # Label every unlabelled photo in data/ (fan-out to all hosts in OLLAMA_HOSTS):
@@ -148,8 +176,11 @@ Floor plans (filenames containing `-FP-`) are tagged directly from the filename 
 | Symptom | Fix |
 |---|---|
 | `nvidia-smi not found` | Install the NVIDIA driver first |
-| `pull: model not found` for `gemma4:31b` | Upgrade Ollama (`curl -fsSL https://ollama.com/install.sh \| sh`) and confirm the tag with `ollama search gemma4` |
+| `pull: model not found` for `gemma4:31b` | Upgrade Ollama and confirm the tag with `ollama search gemma4` |
 | Labeler hangs on first photo | First call compiles/loads the model into VRAM — expect ~30–60 s cold start, once per GPU |
-| Only one GPU shows activity in `nvidia-smi` | Check you passed `--hosts` with two URLs (or that `OLLAMA_HOSTS` is set). `ps aux \| grep 'ollama serve'` should show two processes; ports 11434 and 11435 should both answer `/api/tags`. |
+| Only one GPU shows activity in `nvidia-smi` | Check you passed `--hosts` with two URLs (or that `OLLAMA_HOSTS` is set). Linux: `ps aux \| grep 'ollama serve'` — Windows: `Get-Process ollama`. Both ports `11434` and `11435` should answer `/api/tags`. |
 | `model returned invalid JSON after retries` | Rerun — transient. If persistent, try `--model gemma4:26b` or disable built-in reasoning |
-| Want to re-label with a different model | `python3 scripts/label_photos.py --relabel --model gemma4:31b` |
+| Windows: `running scripts is disabled on this system` | Launch with `powershell -ExecutionPolicy Bypass -File scripts\setup_gemma_host.ps1` as shown above |
+| Windows: `ollama` not found after install | Open a new PowerShell window (the installer updates PATH for new sessions) |
+| Windows: port 11434 already in use | The tray Ollama app is still running. `Get-Process -Name 'ollama','ollama app' \| Stop-Process -Force`, then re-run the setup script |
+| Want to re-label with a different model | `python scripts/label_photos.py --relabel --model gemma4:31b` |
