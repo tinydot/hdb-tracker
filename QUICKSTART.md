@@ -20,7 +20,13 @@ cd hdb-tracker
 bash scripts/setup_gemma_host.sh
 ```
 
-This installs Ollama (if missing), starts `ollama serve` with `OLLAMA_SCHED_SPREAD=1`, pulls `gemma4:31b` (Dense), and installs Python deps.
+This installs Ollama (if missing), starts **one `ollama serve` per GPU** (pinned with `CUDA_VISIBLE_DEVICES`, on ports `11434` and `11435`), pulls `gemma4:31b` (Dense) into each, and installs Python deps. The script prints the exact `--hosts` flag to pass the labeler.
+
+Single-GPU host? Override:
+
+```bash
+GPUS=0 bash scripts/setup_gemma_host.sh
+```
 
 Override the model — e.g. the MoE variant for better throughput, or an edge variant for a low-VRAM host:
 
@@ -44,9 +50,23 @@ Photos land in `data/<listing_id>/`.
 
 ## 4. Label with Gemma
 
+To label across **both GPUs in parallel**, point the labeler at both Ollama instances (one per GPU). The setup script prints these URLs; you can also set them once via env var:
+
 ```bash
-# Label every unlabelled photo in data/:
+export OLLAMA_HOSTS="http://127.0.0.1:11434,http://127.0.0.1:11435"
+```
+
+Then:
+
+```bash
+# Label every unlabelled photo in data/ (fan-out to all hosts in OLLAMA_HOSTS):
 python3 scripts/label_photos.py
+
+# Same thing, explicit:
+python3 scripts/label_photos.py --hosts http://127.0.0.1:11434,http://127.0.0.1:11435
+
+# Single GPU / single host:
+python3 scripts/label_photos.py --hosts http://127.0.0.1:11434
 
 # Just one listing:
 python3 scripts/label_photos.py --listing-id 38260
@@ -62,7 +82,7 @@ python3 scripts/label_photos.py --model gemma4:26b   # MoE
 python3 scripts/label_photos.py --model gemma4:e4b   # edge
 ```
 
-Results are written to `data/labels.db` (SQLite). Re-running is idempotent — only new photos get sent to the model.
+One worker thread is spawned per host; photos are round-robined so both GPUs stay busy. Results are written to `data/labels.db` (SQLite) under a single DB lock. Re-running is idempotent — only new photos get sent to the model.
 
 ## 5. Incremental runs (new listings each week)
 
@@ -117,9 +137,10 @@ Floor plans (filenames containing `-FP-`) are tagged directly from the filename 
 
 ## Performance notes
 
-- `gemma4:31b` (Dense) on one RTX 4500 Ada is roughly 3–5 s/photo → a few hours for the initial 3,200-photo batch. Exact numbers depend on quant level and Ollama version — run `--limit 50` first to measure.
+- `gemma4:31b` (Dense) on one RTX 4500 Ada is roughly 3–5 s/photo. With both GPUs running (default `setup_gemma_host.sh`), the 3,200-photo initial batch should finish in ~1/2 the single-GPU time. Run `--limit 50` first to calibrate.
 - `gemma4:26b` (MoE) typically delivers higher throughput at some cost to subtle-mood consistency.
-- For true dual-GPU throughput, run two `ollama serve` instances pinned via `CUDA_VISIBLE_DEVICES=0` and `CUDA_VISIBLE_DEVICES=1` on different ports, and shard listings between them.
+- Dual-GPU throughput is handled automatically: `setup_gemma_host.sh` starts one `ollama serve` per GPU and the labeler round-robins across them.
+- `OLLAMA_KEEP_ALIVE=24h` (set by the bootstrap) keeps each model resident in VRAM so batches don't pay cold-load time.
 - Gemma 4's built-in reasoning can improve label quality, but latency rises if thinking tokens are uncapped. If Ollama exposes a reasoning toggle for your version, keep it off (or tightly capped) for bulk labeling.
 
 ## Troubleshooting
@@ -128,6 +149,7 @@ Floor plans (filenames containing `-FP-`) are tagged directly from the filename 
 |---|---|
 | `nvidia-smi not found` | Install the NVIDIA driver first |
 | `pull: model not found` for `gemma4:31b` | Upgrade Ollama (`curl -fsSL https://ollama.com/install.sh \| sh`) and confirm the tag with `ollama search gemma4` |
-| Labeler hangs on first photo | First call compiles/loads the model into VRAM — expect ~30–60 s cold start |
+| Labeler hangs on first photo | First call compiles/loads the model into VRAM — expect ~30–60 s cold start, once per GPU |
+| Only one GPU shows activity in `nvidia-smi` | Check you passed `--hosts` with two URLs (or that `OLLAMA_HOSTS` is set). `ps aux \| grep 'ollama serve'` should show two processes; ports 11434 and 11435 should both answer `/api/tags`. |
 | `model returned invalid JSON after retries` | Rerun — transient. If persistent, try `--model gemma4:26b` or disable built-in reasoning |
 | Want to re-label with a different model | `python3 scripts/label_photos.py --relabel --model gemma4:31b` |

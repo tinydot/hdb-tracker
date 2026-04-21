@@ -3,7 +3,9 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -13,7 +15,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = SCRIPT_DIR.parent / "data"
 DEFAULT_DB = DATA_DIR / "labels.db"
 DEFAULT_MODEL = "gemma4:31b"
-DEFAULT_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+DEFAULT_HOSTS = os.environ.get("OLLAMA_HOSTS", os.environ.get("OLLAMA_HOST", "http://localhost:11434"))
 
 ROOMS = [
     "living_room",
@@ -87,7 +89,7 @@ CREATE INDEX IF NOT EXISTS idx_photo_labels_listing ON photo_labels(listing_id);
 
 def open_db(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, check_same_thread=False)
     conn.executescript(SCHEMA_SQL)
     conn.commit()
     return conn
@@ -217,37 +219,48 @@ def main() -> int:
     parser.add_argument("--data-dir", type=Path, default=DATA_DIR)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     parser.add_argument("--model", default=DEFAULT_MODEL)
-    parser.add_argument("--host", default=DEFAULT_HOST, help="Ollama server URL")
+    parser.add_argument(
+        "--hosts",
+        default=DEFAULT_HOSTS,
+        help="Comma-separated Ollama server URLs. One worker per host (e.g. dual-GPU: "
+             "'http://localhost:11434,http://localhost:11435')",
+    )
+    parser.add_argument("--host", default=None, help="(deprecated) alias for --hosts with a single URL")
     parser.add_argument("--listing-id", type=int, default=None, help="Label only this listing")
-    parser.add_argument("--limit", type=int, default=None, help="Stop after N photos")
+    parser.add_argument("--limit", type=int, default=None, help="Stop after queueing N photos")
     parser.add_argument("--relabel", action="store_true", help="Re-label photos already in the DB")
     parser.add_argument("--dry-run", action="store_true", help="Don't call the model; just print what would be done")
     args = parser.parse_args()
 
+    hosts_raw = args.host if args.host else args.hosts
+    hosts = [h.strip() for h in hosts_raw.split(",") if h.strip()]
+    if not hosts:
+        print("ERROR: no Ollama hosts configured", file=sys.stderr)
+        return 2
+    clients = [ollama.Client(host=h) for h in hosts]
+
     conn = open_db(args.db)
-    client = ollama.Client(host=args.host)
+    db_lock = threading.Lock()
+    stats_lock = threading.Lock()
+    stats = {"labeled": 0, "errors": 0}
 
-    total = 0
+    # Build the work list synchronously so we can write floor plans and skip
+    # already-labeled photos without racing the pool.
+    work: list[tuple[int, Path]] = []
+    scanned = 0
     skipped_existing = 0
-    skipped_fp = 0
-    labeled = 0
-    errors = 0
-    t0 = time.time()
-
+    fp_written = 0
     for listing_id, img_path in iter_photos(args.data_dir, args.listing_id):
-        if args.limit is not None and labeled >= args.limit:
-            break
-        total += 1
+        scanned += 1
         filename = img_path.name
 
         if not args.relabel and already_labeled(conn, listing_id, filename):
             skipped_existing += 1
             continue
 
-        kind = classify_by_filename(filename)
         rel_path = str(img_path.relative_to(args.data_dir.parent))
 
-        if kind == "floor_plan":
+        if classify_by_filename(filename) == "floor_plan":
             row = {
                 "listing_id": listing_id,
                 "filename": filename,
@@ -264,22 +277,36 @@ def main() -> int:
                 print(f"[FP]  {rel_path}")
             else:
                 upsert_label(conn, row)
-            skipped_fp += 1
-            labeled += 1
+            fp_written += 1
             continue
 
-        if args.dry_run:
-            print(f"[?]   {rel_path}")
-            labeled += 1
-            continue
+        work.append((listing_id, img_path))
+        if args.limit is not None and len(work) >= args.limit:
+            break
 
-        print(f"[{labeled + 1}] {rel_path} ... ", end="", flush=True)
+    total_to_label = len(work)
+    print(
+        f"Scanned {scanned} photos: "
+        f"{skipped_existing} already labeled, {fp_written} floor plan(s), "
+        f"{total_to_label} to label across {len(hosts)} host(s)."
+    )
+
+    if args.dry_run:
+        for listing_id, img_path in work:
+            print(f"[?]   {img_path.relative_to(args.data_dir.parent)}")
+        return 0
+
+    def process(idx: int, listing_id: int, img_path: Path) -> None:
+        client = clients[idx % len(clients)]
+        filename = img_path.name
+        rel_path = str(img_path.relative_to(args.data_dir.parent))
         try:
             result = label_photo(client, args.model, img_path)
         except Exception as e:
-            print(f"ERROR: {e}")
-            errors += 1
-            continue
+            with stats_lock:
+                stats["errors"] += 1
+            print(f"[host={hosts[idx % len(clients)]}] ERROR {rel_path}: {e}")
+            return
 
         row = {
             "listing_id": listing_id,
@@ -293,22 +320,35 @@ def main() -> int:
             "model": args.model,
             "labeled_at": now_iso(),
         }
-        upsert_label(conn, row)
-        labeled += 1
+        with db_lock:
+            upsert_label(conn, row)
+        with stats_lock:
+            stats["labeled"] += 1
+            n = stats["labeled"]
         print(
-            f"rooms={result['rooms']} moods={result['moods']} "
-            f"conf={result['confidence']}"
+            f"[{n}/{total_to_label} gpu{idx % len(clients)}] {rel_path} "
+            f"rooms={result['rooms']} moods={result['moods']} conf={result['confidence']}"
         )
+
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=len(clients)) as pool:
+        futures = [
+            pool.submit(process, i, lid, ip)
+            for i, (lid, ip) in enumerate(work)
+        ]
+        for fut in as_completed(futures):
+            fut.result()
 
     elapsed = time.time() - t0
     print()
-    print(f"Scanned    : {total}")
-    print(f"Labeled    : {labeled}")
-    print(f"  of which floor plans : {skipped_fp}")
+    print(f"Scanned    : {scanned}")
+    print(f"Labeled    : {stats['labeled'] + fp_written}")
+    print(f"  of which floor plans : {fp_written}")
     print(f"Skipped (already done) : {skipped_existing}")
-    print(f"Errors     : {errors}")
+    print(f"Errors     : {stats['errors']}")
+    print(f"Hosts      : {hosts}")
     print(f"Elapsed    : {elapsed:.1f}s")
-    return 0 if errors == 0 else 1
+    return 0 if stats["errors"] == 0 else 1
 
 
 if __name__ == "__main__":
