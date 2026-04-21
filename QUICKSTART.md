@@ -8,7 +8,9 @@ End-to-end: bring up a Gemma-on-Ollama host, scrape HDB listing photos, label th
 - Python 3.10+
 - `git`, `curl`
 
-Tested on dual RTX 4500 Ada (48 GB total). A single RTX 4500 Ada (24 GB) is enough for `gemma3:27b` Q4.
+Tested on dual RTX 4500 Ada (48 GB total). A single RTX 4500 Ada (24 GB) is enough for `gemma4:31b` (Dense) at Q4.
+
+> **Ollama tag**: the scripts default to `gemma4:31b`. Confirm the exact tag on your Ollama version (`ollama search gemma4`) — variants may be published as `gemma4:31b`, `gemma4:31b-dense`, `gemma4:26b` (MoE), `gemma4:e4b`, or `gemma4:e2b`. Override with `--model` / the `MODEL` env var.
 
 ## 2. Clone and bootstrap
 
@@ -18,12 +20,14 @@ cd hdb-tracker
 bash scripts/setup_gemma_host.sh
 ```
 
-This installs Ollama (if missing), starts `ollama serve` with `OLLAMA_SCHED_SPREAD=1`, pulls `gemma3:27b`, and installs Python deps.
+This installs Ollama (if missing), starts `ollama serve` with `OLLAMA_SCHED_SPREAD=1`, pulls `gemma4:31b` (Dense), and installs Python deps.
 
-Override the model if you want the faster 12B variant:
+Override the model — e.g. the MoE variant for better throughput, or an edge variant for a low-VRAM host:
 
 ```bash
-MODEL=gemma3:12b bash scripts/setup_gemma_host.sh
+MODEL=gemma4:26b  bash scripts/setup_gemma_host.sh   # 26B MoE
+MODEL=gemma4:e4b  bash scripts/setup_gemma_host.sh   # edge, ~4B-effective
+MODEL=gemma4:e2b  bash scripts/setup_gemma_host.sh   # edge, ~2B-effective
 ```
 
 ## 3. Scrape listing photos
@@ -53,8 +57,9 @@ python3 scripts/label_photos.py --limit 10
 # Re-label photos already in the DB:
 python3 scripts/label_photos.py --relabel
 
-# Use the smaller/faster model:
-python3 scripts/label_photos.py --model gemma3:12b
+# Use a smaller/faster variant:
+python3 scripts/label_photos.py --model gemma4:26b   # MoE
+python3 scripts/label_photos.py --model gemma4:e4b   # edge
 ```
 
 Results are written to `data/labels.db` (SQLite). Re-running is idempotent — only new photos get sent to the model.
@@ -93,6 +98,15 @@ ORDER BY confidence ASC
 LIMIT 50;
 ```
 
+## Model variants
+
+| Tag | Size | When to pick |
+|---|---|---|
+| `gemma4:31b`  | 31B Dense | **Default.** Best label quality; fits a single 24 GB GPU at Q4. |
+| `gemma4:26b`  | 26B MoE   | Highest throughput per watt; slightly less consistent on subtle mood tags. |
+| `gemma4:e4b`  | ~4B edge  | Low-VRAM hosts; acceptable for room tags, weaker on mood. |
+| `gemma4:e2b`  | ~2B edge  | Smoke tests / CPU fallback. |
+
 ## Tag vocabulary
 
 **Rooms** (multi-label): `living_room`, `bedroom`, `kitchen`, `toilet`, `dining`, `balcony`, `study`, `corridor`, `entryway`, `storeroom`, `utility_yard`, `exterior`, `floor_plan`, `other`
@@ -103,16 +117,17 @@ Floor plans (filenames containing `-FP-`) are tagged directly from the filename 
 
 ## Performance notes
 
-- `gemma3:27b` on one RTX 4500 Ada ≈ 3–5 s/photo → ~3–4 h for the initial 3,200-photo batch.
-- `gemma3:12b` ≈ ~2× faster with a small accuracy trade-off on subtler mood tags.
+- `gemma4:31b` (Dense) on one RTX 4500 Ada is roughly 3–5 s/photo → a few hours for the initial 3,200-photo batch. Exact numbers depend on quant level and Ollama version — run `--limit 50` first to measure.
+- `gemma4:26b` (MoE) typically delivers higher throughput at some cost to subtle-mood consistency.
 - For true dual-GPU throughput, run two `ollama serve` instances pinned via `CUDA_VISIBLE_DEVICES=0` and `CUDA_VISIBLE_DEVICES=1` on different ports, and shard listings between them.
+- Gemma 4's built-in reasoning can improve label quality, but latency rises if thinking tokens are uncapped. If Ollama exposes a reasoning toggle for your version, keep it off (or tightly capped) for bulk labeling.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | `nvidia-smi not found` | Install the NVIDIA driver first |
-| `pull: model not found` for `gemma3:27b` | Upgrade Ollama (`curl -fsSL https://ollama.com/install.sh \| sh`) or use `gemma3:12b` |
+| `pull: model not found` for `gemma4:31b` | Upgrade Ollama (`curl -fsSL https://ollama.com/install.sh \| sh`) and confirm the tag with `ollama search gemma4` |
 | Labeler hangs on first photo | First call compiles/loads the model into VRAM — expect ~30–60 s cold start |
-| `model returned invalid JSON after retries` | Rerun — a transient decoding artifact. If persistent, lower `--model` to 12B |
-| Want to re-label with a newer model | `python3 scripts/label_photos.py --relabel --model gemma3:27b` |
+| `model returned invalid JSON after retries` | Rerun — transient. If persistent, try `--model gemma4:26b` or disable built-in reasoning |
+| Want to re-label with a different model | `python3 scripts/label_photos.py --relabel --model gemma4:31b` |

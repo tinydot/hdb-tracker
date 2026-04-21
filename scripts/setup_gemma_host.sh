@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-MODEL="${MODEL:-gemma3:27b}"
+MODEL="${MODEL:-gemma4:31b}"
 
 echo "==> Checking NVIDIA driver"
 if ! command -v nvidia-smi >/dev/null 2>&1; then

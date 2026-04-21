@@ -12,7 +12,7 @@ import ollama
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = SCRIPT_DIR.parent / "data"
 DEFAULT_DB = DATA_DIR / "labels.db"
-DEFAULT_MODEL = "gemma3:27b"
+DEFAULT_MODEL = "gemma4:31b"
 DEFAULT_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
 ROOMS = [
