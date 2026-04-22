@@ -10,8 +10,8 @@ from pathlib import Path
 import ollama
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DATA_DIR = SCRIPT_DIR.parent / "data"
-DEFAULT_DB = DATA_DIR / "labels.db"
+DATA_DIR = SCRIPT_DIR.parent / "photos"
+DEFAULT_DB = SCRIPT_DIR.parent / "data" / "labels.db"
 DEFAULT_MODEL = "gemma4:31b"
 DEFAULT_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
