@@ -100,12 +100,14 @@ LIMIT 50;
 
 ## Model variants
 
+Because the output is constrained to a fixed label vocabulary and temperature is set to 0.1, smaller models perform close to larger ones on this task. **`gemma4:e4b` is a reasonable default** — try it before committing to the heavier variants.
+
 | Tag | Size | When to pick |
 |---|---|---|
-| `gemma4:31b`  | 31B Dense | **Default.** Best label quality; fits a single 24 GB GPU at Q4. |
-| `gemma4:26b`  | 26B MoE   | Highest throughput per watt; slightly less consistent on subtle mood tags. |
-| `gemma4:e4b`  | ~4B edge  | Low-VRAM hosts; acceptable for room tags, weaker on mood. |
-| `gemma4:e2b`  | ~2B edge  | Smoke tests / CPU fallback. |
+| `gemma4:e4b`  | ~4B edge  | **Good starting point.** Fixed-vocab classification at low temperature narrows the gap with larger models. Weaker on subtle mood distinctions (`japandi` vs `scandinavian`). |
+| `gemma4:26b`  | 26B MoE   | Step up if `e4b` mood tags feel too imprecise; highest throughput per watt among the larger variants. |
+| `gemma4:31b`  | 31B Dense | Best overall quality; needed only if mood nuance matters and throughput is not a constraint. Fits a single 24 GB GPU at Q4. |
+| `gemma4:e2b`  | ~2B edge  | Smoke tests / CPU fallback only. |
 
 ## Tag vocabulary
 
@@ -117,7 +119,8 @@ Floor plans (filenames containing `-FP-`) are tagged directly from the filename 
 
 ## Performance notes
 
-- `gemma4:31b` (Dense) on one RTX 4500 Ada is roughly 3–5 s/photo → a few hours for the initial 3,200-photo batch. Exact numbers depend on quant level and Ollama version — run `--limit 50` first to measure.
+- `gemma4:e4b` on a single RTX 4500 Ada is roughly 0.5–1 s/photo — well under an hour for the initial 3,200-photo batch.
+- `gemma4:31b` (Dense) on one RTX 4500 Ada is roughly 3–5 s/photo → a few hours for the same batch. Exact numbers depend on quant level and Ollama version — run `--limit 50` first to measure.
 - `gemma4:26b` (MoE) typically delivers higher throughput at some cost to subtle-mood consistency.
 - For true dual-GPU throughput, run two `ollama serve` instances pinned via `CUDA_VISIBLE_DEVICES=0` and `CUDA_VISIBLE_DEVICES=1` on different ports, and shard listings between them.
 - Gemma 4's built-in reasoning can improve label quality, but latency rises if thinking tokens are uncapped. If Ollama exposes a reasoning toggle for your version, keep it off (or tightly capped) for bulk labeling.
