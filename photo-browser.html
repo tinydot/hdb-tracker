@@ -326,6 +326,7 @@
       justify-content: center;
       padding: 16px;
       overflow: hidden;
+      position: relative;
     }
     .lb-photo-wrap img {
       max-width: 100%;
@@ -334,6 +335,23 @@
       border-radius: 4px;
       display: block;
     }
+
+    .lb-fp-back {
+      position: absolute;
+      top: 24px;
+      left: 24px;
+      background: rgba(0,0,0,.65);
+      color: #ccd;
+      border: 1px solid #334;
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: .8rem;
+      cursor: pointer;
+      transition: background .15s, color .15s;
+      z-index: 2;
+      display: none;
+    }
+    .lb-fp-back:hover { background: rgba(0,0,0,.88); color: #fff; }
 
     /* Side panel */
     .lb-panel {
@@ -468,6 +486,7 @@
   <div class="lb-body">
     <div class="lb-photo-wrap">
       <img id="lb-img" src="" alt="">
+      <button class="lb-fp-back" id="lb-fp-back" title="Back to photo">&#8592; Back to photo</button>
     </div>
 
     <div class="lb-panel">
@@ -781,6 +800,10 @@ function renderLightbox(focusFP) {
 
   // Floor plans panel
   const fpEl = document.getElementById('lb-fps');
+  const backBtn = document.getElementById('lb-fp-back');
+  const lbImg = document.getElementById('lb-img');
+  backBtn.style.display = focusFP ? 'block' : 'none';
+
   if (fps.length === 0) {
     fpEl.innerHTML = '<span class="no-fp-msg">No floor plans for this listing.</span>';
   } else {
@@ -792,13 +815,22 @@ function renderLightbox(focusFP) {
     fpEl.querySelectorAll('.fp-thumb-wrap').forEach(thumb => {
       thumb.addEventListener('click', () => {
         const fpIdx = parseInt(thumb.dataset.fpIdx, 10);
-        document.getElementById('lb-img').src = fps[fpIdx].path;
+        lbImg.src = fps[fpIdx].path;
         fpEl.querySelectorAll('.fp-thumb-wrap').forEach(t => t.classList.remove('active'));
         thumb.classList.add('active');
+        backBtn.style.display = 'block';
       });
     });
   }
 }
+
+document.getElementById('lb-fp-back').addEventListener('click', () => {
+  const row = currentResults[lbIndex];
+  if (!row) return;
+  document.getElementById('lb-img').src = row.path;
+  document.getElementById('lb-fp-back').style.display = 'none';
+  document.querySelectorAll('.fp-thumb-wrap').forEach(t => t.classList.remove('active'));
+});
 
 function closeLightbox() {
   document.getElementById('lightbox').classList.remove('open');
