@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HDB Photo Browser</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.12.0/sql-wasm.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f4f4f6;
+      color: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Header ─────────────────────────────────────── */
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 10px 18px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(0,0,0,.35);
+      z-index: 10;
+    }
+
+    header h1 { font-size: 1rem; font-weight: 600; letter-spacing: .4px; white-space: nowrap; }
+
+    .load-btn {
+      background: #e94560;
+      color: #fff;
+      border: none;
+      padding: 6px 15px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: .82rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .load-btn:hover { background: #c73652; }
+
+    #status {
+      font-size: .78rem;
+      color: #8888aa;
+      margin-left: auto;
+      white-space: nowrap;
+    }
+
+    /* ── Layout ─────────────────────────────────────── */
+    .layout { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Sidebar ─────────────────────────────────────── */
+    aside {
+      width: 252px;
+      min-width: 252px;
+      background: #16213e;
+      color: #ccd;
+      overflow-y: auto;
+      flex-shrink: 0;
+      padding: 14px 14px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .section-label {
+      font-size: .65rem;
+      font-weight: 700;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      color: #556;
+      margin: 16px 0 7px;
+    }
+    .section-label:first-child { margin-top: 0; }
+
+    /* listing search */
+    .listing-input {
+      width: 100%;
+      background: #0f3460;
+      border: 1px solid #1e4070;
+      color: #dde;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: .8rem;
+      outline: none;
+    }
+    .listing-input::placeholder { color: #4455; }
+    .listing-input:focus { border-color: #e94560; }
+
+    /* chip grid */
+    .chip-grid { display: flex; flex-wrap: wrap; gap: 5px; }
+
+    .chip {
+      background: #0f3460;
+      color: #88aacc;
+      border: 1px solid #1e4070;
+      border-radius: 12px;
+      padding: 3px 10px;
+      font-size: .68rem;
+      cursor: pointer;
+      user-select: none;
+      transition: background .12s, color .12s, border-color .12s;
+      white-space: nowrap;
+    }
+    .chip:hover { background: #1a4a80; }
+    .chip.active { background: #e94560; color: #fff; border-color: #e94560; }
+
+    /* confidence slider */
+    .slider-row { display: flex; align-items: center; gap: 8px; }
+    input[type=range] { flex: 1; accent-color: #e94560; cursor: pointer; }
+    .slider-val { font-size: .75rem; color: #778; width: 34px; text-align: right; flex-shrink: 0; }
+
+    /* sort */
+    .sort-row { display: flex; gap: 5px; }
+    .sort-btn {
+      flex: 1;
+      background: #0f3460;
+      color: #88aacc;
+      border: 1px solid #1e4070;
+      border-radius: 6px;
+      padding: 5px 4px;
+      font-size: .72rem;
+      cursor: pointer;
+      transition: background .12s, color .12s;
+    }
+    .sort-btn:hover { background: #1a4a80; }
+    .sort-btn.active { background: #e94560; color: #fff; border-color: #e94560; }
+
+    /* apply / reset */
+    .btn-row { display: flex; gap: 7px; margin-top: 18px; }
+    .apply-btn {
+      flex: 1;
+      background: #e94560;
+      color: #fff;
+      border: none;
+      padding: 9px;
+      border-radius: 7px;
+      cursor: pointer;
+      font-size: .84rem;
+      font-weight: 700;
+    }
+    .apply-btn:hover { background: #c73652; }
+    .reset-btn {
+      background: #0f3460;
+      color: #88aacc;
+      border: 1px solid #1e4070;
+      padding: 9px 13px;
+      border-radius: 7px;
+      cursor: pointer;
+      font-size: .82rem;
+    }
+    .reset-btn:hover { background: #1a4a80; }
+
+    .result-count { font-size: .72rem; color: #556; text-align: center; margin-top: 10px; }
+
+    /* ── Main area ───────────────────────────────────── */
+    main { flex: 1; overflow-y: auto; padding: 16px; }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      gap: 12px;
+      color: #aaa;
+    }
+    .empty-state svg { opacity: .25; }
+    .empty-state .hint { font-size: .78rem; color: #888; }
+
+    /* Photo grid */
+    .photo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+    }
+
+    .photo-card {
+      background: #fff;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,.1);
+      cursor: pointer;
+      position: relative;
+      transition: transform .14s, box-shadow .14s;
+    }
+    .photo-card:hover { transform: translateY(-2px); box-shadow: 0 5px 14px rgba(0,0,0,.14); }
+
+    .card-img {
+      width: 100%;
+      height: 150px;
+      object-fit: cover;
+      display: block;
+      background: #e8e8ee;
+    }
+
+    /* floor-plan badge on card */
+    .fp-pill {
+      position: absolute;
+      top: 7px;
+      right: 7px;
+      background: rgba(10,20,40,.72);
+      color: #9cf;
+      border: none;
+      border-radius: 5px;
+      padding: 3px 8px;
+      font-size: .62rem;
+      font-weight: 700;
+      letter-spacing: .5px;
+      cursor: pointer;
+      backdrop-filter: blur(3px);
+      transition: background .12s;
+    }
+    .fp-pill:hover { background: rgba(233,69,96,.85); color: #fff; }
+    .fp-pill.no-fp { opacity: .4; cursor: default; }
+    .fp-pill.no-fp:hover { background: rgba(10,20,40,.72); color: #9cf; }
+
+    .card-body { padding: 8px 10px 10px; }
+
+    .card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 5px;
+    }
+
+    .listing-badge {
+      font-size: .68rem;
+      font-weight: 700;
+      background: #f0f0f5;
+      color: #1a1a2e;
+      padding: 2px 7px;
+      border-radius: 4px;
+    }
+
+    .conf-badge {
+      font-size: .65rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 4px;
+    }
+    .conf-high { background: #d4edda; color: #1a7a3a; }
+    .conf-mid  { background: #fff3cd; color: #856404; }
+    .conf-low  { background: #f8d7da; color: #842029; }
+    .conf-none { background: #e8e8ee; color: #888; }
+
+    .tag-row { display: flex; flex-wrap: wrap; gap: 3px; }
+    .tag { font-size: .6rem; background: #f0f0f5; color: #445; padding: 1px 6px; border-radius: 3px; }
+    .tag.mood { background: #fce4ec; color: #880e4f; }
+
+    /* load more */
+    .load-more-wrap { text-align: center; margin: 20px 0; }
+    .load-more {
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      padding: 10px 28px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: .84rem;
+    }
+    .load-more:hover { background: #e94560; }
+
+    /* ── Lightbox ────────────────────────────────────── */
+    .lightbox {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.93);
+      z-index: 200;
+      flex-direction: column;
+    }
+    .lightbox.open { display: flex; }
+
+    .lb-header {
+      display: flex;
+      align-items: center;
+      padding: 8px 12px;
+      background: rgba(0,0,0,.5);
+      flex-shrink: 0;
+      gap: 8px;
+    }
+
+    .lb-nav {
+      background: none;
+      border: none;
+      color: #888;
+      font-size: 1.9rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0 6px;
+      transition: color .12s;
+    }
+    .lb-nav:hover { color: #fff; }
+    .lb-nav:disabled { opacity: .2; cursor: default; }
+
+    .lb-counter { font-size: .8rem; color: #778; min-width: 70px; text-align: center; }
+
+    .lb-title { flex: 1; font-size: .82rem; color: #aaa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .lb-close {
+      background: none;
+      border: none;
+      color: #888;
+      font-size: 1.3rem;
+      cursor: pointer;
+      padding: 2px 6px;
+      transition: color .12s;
+      line-height: 1;
+    }
+    .lb-close:hover { color: #fff; }
+
+    .lb-body { display: flex; flex: 1; overflow: hidden; }
+
+    .lb-photo-wrap {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      overflow: hidden;
+    }
+    .lb-photo-wrap img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      border-radius: 4px;
+      display: block;
+    }
+
+    /* Side panel */
+    .lb-panel {
+      width: 290px;
+      min-width: 290px;
+      background: #0d0d1a;
+      overflow-y: auto;
+      padding: 16px;
+      color: #ccd;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .lb-section-label {
+      font-size: .62rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.3px;
+      color: #445;
+      margin-bottom: 6px;
+    }
+
+    .lb-listing-id { font-size: 1.1rem; font-weight: 700; color: #fff; }
+
+    .conf-bar-track {
+      height: 4px;
+      background: #222;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .conf-bar-fill { height: 100%; background: #e94560; border-radius: 2px; transition: width .2s; }
+
+    .lb-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .lb-tag {
+      font-size: .7rem;
+      padding: 3px 9px;
+      border-radius: 5px;
+      background: #1a2a40;
+      color: #9ab;
+    }
+    .lb-tag.mood { background: #2a1020; color: #f48fb1; }
+
+    .lb-justification { font-size: .78rem; line-height: 1.55; color: #889; }
+
+    /* Floor plan thumbnails in panel */
+    .fp-section { display: flex; flex-direction: column; gap: 8px; }
+
+    .fp-thumb-wrap {
+      border-radius: 7px;
+      overflow: hidden;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: border-color .12s;
+      flex-shrink: 0;
+    }
+    .fp-thumb-wrap:hover { border-color: #556; }
+    .fp-thumb-wrap.active { border-color: #e94560; }
+
+    .fp-thumb-wrap img { width: 100%; display: block; }
+
+    .no-fp-msg { font-size: .75rem; color: #445; font-style: italic; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>HDB Photo Browser</h1>
+  <label class="load-btn" for="db-file-input">Load labels.db</label>
+  <input type="file" id="db-file-input" accept=".db,.sqlite,.sqlite3" style="display:none">
+  <span id="status">No database loaded — open data/labels.db</span>
+</header>
+
+<div class="layout">
+  <!-- ── Sidebar ── -->
+  <aside>
+    <div class="section-label">Listing ID</div>
+    <input class="listing-input" type="number" id="listing-input" placeholder="e.g. 38260">
+
+    <div class="section-label">Rooms</div>
+    <div class="chip-grid" id="room-chips"></div>
+
+    <div class="section-label">Moods</div>
+    <div class="chip-grid" id="mood-chips"></div>
+
+    <div class="section-label">Min Confidence</div>
+    <div class="slider-row">
+      <input type="range" id="conf-slider" min="0" max="100" value="0" step="5">
+      <span class="slider-val" id="conf-val">0%</span>
+    </div>
+
+    <div class="section-label">Sort By</div>
+    <div class="sort-row">
+      <button class="sort-btn active" data-sort="conf_desc">Conf ↓</button>
+      <button class="sort-btn" data-sort="conf_asc">Conf ↑</button>
+      <button class="sort-btn" data-sort="listing">Listing</button>
+    </div>
+
+    <div class="btn-row">
+      <button class="apply-btn" id="apply-btn">Apply</button>
+      <button class="reset-btn" id="reset-btn">Reset</button>
+    </div>
+
+    <div class="result-count" id="result-count"></div>
+  </aside>
+
+  <!-- ── Main grid ── -->
+  <main id="main-area">
+    <div class="empty-state" id="empty-state">
+      <svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <circle cx="8.5" cy="8.5" r="1.5"/>
+        <polyline points="21 15 16 10 5 21"/>
+      </svg>
+      <p>Load <strong>data/labels.db</strong> to start browsing</p>
+      <p class="hint">Tip: serve locally with <code>python -m http.server</code> from the repo root</p>
+    </div>
+  </main>
+</div>
+
+<!-- ── Lightbox ── -->
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true">
+  <div class="lb-header">
+    <button class="lb-nav" id="lb-prev" title="Previous (←)">&#8249;</button>
+    <span class="lb-counter" id="lb-counter"></span>
+    <button class="lb-nav" id="lb-next" title="Next (→)">&#8250;</button>
+    <span class="lb-title" id="lb-title"></span>
+    <button class="lb-close" id="lb-close" title="Close (Esc)">&#10005;</button>
+  </div>
+
+  <div class="lb-body">
+    <div class="lb-photo-wrap">
+      <img id="lb-img" src="" alt="">
+    </div>
+
+    <div class="lb-panel">
+      <!-- Meta -->
+      <div>
+        <div class="lb-section-label">Listing</div>
+        <div class="lb-listing-id" id="lb-listing-id"></div>
+        <div class="conf-bar-track"><div class="conf-bar-fill" id="lb-conf-bar"></div></div>
+        <div style="font-size:.72rem;color:#556;margin-top:4px" id="lb-conf-text"></div>
+      </div>
+
+      <div>
+        <div class="lb-section-label">Rooms</div>
+        <div class="lb-tags" id="lb-rooms"></div>
+      </div>
+
+      <div>
+        <div class="lb-section-label">Moods</div>
+        <div class="lb-tags" id="lb-moods"></div>
+      </div>
+
+      <div>
+        <div class="lb-section-label">Notes</div>
+        <div class="lb-justification" id="lb-just"></div>
+      </div>
+
+      <div>
+        <div class="lb-section-label">Floor Plans <span style="color:#334;font-weight:400;font-size:.6rem">(click to view)</span></div>
+        <div class="fp-section" id="lb-fps"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Vocabularies ───────────────────────────────────────────────────────────
+const ROOMS = ['living_room','bedroom','kitchen','toilet','dining','balcony',
+               'study','corridor','entryway','storeroom','utility_yard','exterior','other'];
+const MOODS = ['japandi','scandinavian','minimalist','modern','industrial','retro',
+               'traditional','luxe','homey','cozy','eclectic','messy','cluttered','empty'];
+
+const PAGE_SIZE = 120;
+
+// ── State ──────────────────────────────────────────────────────────────────
+let SQL = null;
+let db = null;
+let activeRooms = new Set();
+let activeMoods = new Set();
+let sortMode = 'conf_desc';
+let currentResults = [];   // full query result rows
+let renderedCount = 0;
+let lbIndex = 0;
+let fpCache = {};          // listing_id → [{filename, path}]
+
+// ── sql.js init ────────────────────────────────────────────────────────────
+initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.12.0/${f}` })
+  .then(s => { SQL = s; })
+  .catch(e => console.error('sql.js failed to load:', e));
+
+// ── Build sidebar chips ────────────────────────────────────────────────────
+function buildChips(containerId, items, activeSet) {
+  const el = document.getElementById(containerId);
+  items.forEach(v => {
+    const btn = document.createElement('button');
+    btn.className = 'chip';
+    btn.textContent = v.replace(/_/g, ' ');
+    btn.dataset.value = v;
+    btn.addEventListener('click', () => {
+      const on = btn.classList.toggle('active');
+      on ? activeSet.add(v) : activeSet.delete(v);
+    });
+    el.appendChild(btn);
+  });
+}
+
+buildChips('room-chips', ROOMS, activeRooms);
+buildChips('mood-chips', MOODS, activeMoods);
+
+// ── Confidence slider ──────────────────────────────────────────────────────
+const confSlider = document.getElementById('conf-slider');
+const confValEl  = document.getElementById('conf-val');
+confSlider.addEventListener('input', () => {
+  confValEl.textContent = confSlider.value + '%';
+});
+
+// ── Sort buttons ───────────────────────────────────────────────────────────
+document.querySelectorAll('.sort-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    sortMode = btn.dataset.sort;
+  });
+});
+
+// ── DB file load ───────────────────────────────────────────────────────────
+document.getElementById('db-file-input').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (!SQL) { alert('sql.js is still loading — try again in a moment.'); return; }
+  const buf = await file.arrayBuffer();
+  db = new SQL.Database(new Uint8Array(buf));
+  fpCache = {};
+  document.getElementById('status').textContent = `${file.name} loaded`;
+  applyFilters();
+  e.target.value = '';
+});
+
+// ── Apply / Reset ──────────────────────────────────────────────────────────
+document.getElementById('apply-btn').addEventListener('click', applyFilters);
+
+document.getElementById('reset-btn').addEventListener('click', () => {
+  activeRooms.clear();
+  activeMoods.clear();
+  document.querySelectorAll('.chip.active').forEach(c => c.classList.remove('active'));
+  confSlider.value = 0;
+  confValEl.textContent = '0%';
+  document.getElementById('listing-input').value = '';
+  document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('.sort-btn[data-sort="conf_desc"]').classList.add('active');
+  sortMode = 'conf_desc';
+  applyFilters();
+});
+
+document.getElementById('listing-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') applyFilters();
+});
+
+// ── Query builder ──────────────────────────────────────────────────────────
+function buildQuery() {
+  const minConf   = parseInt(confSlider.value, 10) / 100;
+  const listingRaw = document.getElementById('listing-input').value.trim();
+
+  const clauses = ['is_floor_plan = 0'];
+
+  if (listingRaw) {
+    const lid = parseInt(listingRaw, 10);
+    if (!isNaN(lid)) clauses.push(`listing_id = ${lid}`);
+  }
+
+  if (minConf > 0)
+    clauses.push(`confidence >= ${minConf}`);
+
+  if (activeRooms.size > 0) {
+    const list = [...activeRooms].map(r => `'${r}'`).join(',');
+    clauses.push(`EXISTS (SELECT 1 FROM json_each(rooms) WHERE value IN (${list}))`);
+  }
+
+  if (activeMoods.size > 0) {
+    const list = [...activeMoods].map(m => `'${m}'`).join(',');
+    clauses.push(`EXISTS (SELECT 1 FROM json_each(moods) WHERE value IN (${list}))`);
+  }
+
+  const order = { conf_desc: 'confidence DESC', conf_asc: 'confidence ASC', listing: 'listing_id ASC, filename ASC' }[sortMode];
+
+  return `
+    SELECT listing_id, filename, path, rooms, moods, justification, confidence
+    FROM photo_labels
+    WHERE ${clauses.join(' AND ')}
+    ORDER BY ${order}
+  `;
+}
+
+// ── Run filters ────────────────────────────────────────────────────────────
+function applyFilters() {
+  if (!db) return;
+  const rows = [];
+  try {
+    const res = db.exec(buildQuery());
+    if (res.length > 0) {
+      const cols = res[0].columns;
+      res[0].values.forEach(vals => {
+        const r = {};
+        cols.forEach((c, i) => r[c] = vals[i]);
+        r.rooms = JSON.parse(r.rooms || '[]');
+        r.moods = JSON.parse(r.moods || '[]');
+        rows.push(r);
+      });
+    }
+  } catch (err) {
+    console.error('Query error:', err);
+  }
+  currentResults = rows;
+  renderedCount  = 0;
+  renderGrid(true);
+  document.getElementById('result-count').textContent =
+    rows.length === 0 ? 'No results' : `${rows.length.toLocaleString()} photo${rows.length !== 1 ? 's' : ''}`;
+}
+
+// ── Render photo grid ──────────────────────────────────────────────────────
+function renderGrid(reset) {
+  const main = document.getElementById('main-area');
+
+  if (reset) {
+    main.innerHTML = '';
+    if (currentResults.length === 0) {
+      main.innerHTML = '<div class="empty-state"><p>No photos match the current filters.</p></div>';
+      return;
+    }
+    const grid = document.createElement('div');
+    grid.className = 'photo-grid';
+    grid.id = 'photo-grid';
+    main.appendChild(grid);
+  }
+
+  const grid = document.getElementById('photo-grid');
+  const batch = currentResults.slice(renderedCount, renderedCount + PAGE_SIZE);
+
+  batch.forEach((row, batchIdx) => {
+    const idx = renderedCount + batchIdx;
+    const fps = getFloorPlans(row.listing_id);
+    const hasFP = fps.length > 0;
+
+    const conf = row.confidence;
+    const confCls = conf == null ? 'conf-none' : conf >= 0.75 ? 'conf-high' : conf >= 0.5 ? 'conf-mid' : 'conf-low';
+    const confTxt = conf == null ? '–' : Math.round(conf * 100) + '%';
+
+    const roomHtml = row.rooms.slice(0, 4).map(r => `<span class="tag">${r.replace(/_/g,' ')}</span>`).join('');
+    const moodHtml = row.moods.slice(0, 3).map(m => `<span class="tag mood">${m}</span>`).join('');
+
+    const card = document.createElement('div');
+    card.className = 'photo-card';
+
+    card.innerHTML = `
+      <img class="card-img" src="${escHtml(row.path)}" alt="" loading="lazy"
+           onerror="this.style.background='#dde';this.style.minHeight='150px'">
+      <button class="fp-pill${hasFP ? '' : ' no-fp'}" data-idx="${idx}" title="${hasFP ? 'View floor plan' : 'No floor plan available'}">
+        ⊞ FP${hasFP ? ` (${fps.length})` : ''}
+      </button>
+      <div class="card-body">
+        <div class="card-top">
+          <span class="listing-badge">#${row.listing_id}</span>
+          <span class="conf-badge ${confCls}">${confTxt}</span>
+        </div>
+        <div class="tag-row">${roomHtml}${moodHtml}</div>
+      </div>`;
+
+    card.querySelector('.fp-pill').addEventListener('click', e => {
+      e.stopPropagation();
+      if (hasFP) openLightbox(idx, true);
+    });
+
+    card.addEventListener('click', () => openLightbox(idx, false));
+    grid.appendChild(card);
+  });
+
+  renderedCount += batch.length;
+
+  // Remove stale "load more" button
+  document.getElementById('load-more-wrap')?.remove();
+
+  if (renderedCount < currentResults.length) {
+    const wrap = document.createElement('div');
+    wrap.className = 'load-more-wrap';
+    wrap.id = 'load-more-wrap';
+    const btn = document.createElement('button');
+    btn.className = 'load-more';
+    btn.textContent = `Load more (${(currentResults.length - renderedCount).toLocaleString()} remaining)`;
+    btn.addEventListener('click', () => renderGrid(false));
+    wrap.appendChild(btn);
+    main.appendChild(wrap);
+  }
+}
+
+// ── Floor plan cache ───────────────────────────────────────────────────────
+function getFloorPlans(listingId) {
+  if (fpCache[listingId] !== undefined) return fpCache[listingId];
+  if (!db) return [];
+  try {
+    const res = db.exec(
+      `SELECT filename, path FROM photo_labels WHERE listing_id = ${listingId} AND is_floor_plan = 1 ORDER BY filename`
+    );
+    const fps = res.length > 0 ? res[0].values.map(([fn, p]) => ({ filename: fn, path: p })) : [];
+    fpCache[listingId] = fps;
+    return fps;
+  } catch { return []; }
+}
+
+// ── Lightbox ───────────────────────────────────────────────────────────────
+function openLightbox(idx, focusFP) {
+  lbIndex = idx;
+  renderLightbox(focusFP);
+  document.getElementById('lightbox').classList.add('open');
+}
+
+function renderLightbox(focusFP) {
+  const row = currentResults[lbIndex];
+  if (!row) return;
+
+  const fps  = getFloorPlans(row.listing_id);
+  const conf = row.confidence;
+
+  // Main image: show FP[0] if focusFP and available, otherwise the photo
+  const mainSrc = (focusFP && fps.length > 0) ? fps[0].path : row.path;
+  document.getElementById('lb-img').src = mainSrc;
+  document.getElementById('lb-title').textContent = row.filename;
+  document.getElementById('lb-counter').textContent = `${lbIndex + 1} / ${currentResults.length}`;
+
+  document.getElementById('lb-listing-id').textContent = `Listing #${row.listing_id}`;
+  document.getElementById('lb-conf-bar').style.width = (conf != null ? Math.round(conf * 100) : 0) + '%';
+  document.getElementById('lb-conf-text').textContent = conf != null ? `Confidence: ${Math.round(conf * 100)}%` : 'Confidence: –';
+
+  document.getElementById('lb-rooms').innerHTML =
+    row.rooms.map(r => `<span class="lb-tag">${r.replace(/_/g,' ')}</span>`).join('') || '<span style="color:#334;font-size:.72rem">–</span>';
+  document.getElementById('lb-moods').innerHTML =
+    row.moods.map(m => `<span class="lb-tag mood">${m}</span>`).join('') || '<span style="color:#334;font-size:.72rem">–</span>';
+  document.getElementById('lb-just').textContent = row.justification || '–';
+
+  // Nav buttons
+  document.getElementById('lb-prev').disabled = lbIndex <= 0;
+  document.getElementById('lb-next').disabled = lbIndex >= currentResults.length - 1;
+
+  // Floor plans panel
+  const fpEl = document.getElementById('lb-fps');
+  if (fps.length === 0) {
+    fpEl.innerHTML = '<span class="no-fp-msg">No floor plans for this listing.</span>';
+  } else {
+    fpEl.innerHTML = fps.map((fp, i) => `
+      <div class="fp-thumb-wrap${(focusFP && i === 0) ? ' active' : ''}" data-fp-idx="${i}">
+        <img src="${escHtml(fp.path)}" alt="Floor plan ${i + 1}" loading="lazy">
+      </div>`).join('');
+
+    fpEl.querySelectorAll('.fp-thumb-wrap').forEach(thumb => {
+      thumb.addEventListener('click', () => {
+        const fpIdx = parseInt(thumb.dataset.fpIdx, 10);
+        document.getElementById('lb-img').src = fps[fpIdx].path;
+        fpEl.querySelectorAll('.fp-thumb-wrap').forEach(t => t.classList.remove('active'));
+        thumb.classList.add('active');
+      });
+    });
+  }
+}
+
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('open');
+}
+
+function navLightbox(dir) {
+  const next = lbIndex + dir;
+  if (next < 0 || next >= currentResults.length) return;
+  lbIndex = next;
+  renderLightbox(false);
+}
+
+document.getElementById('lb-close').addEventListener('click', closeLightbox);
+document.getElementById('lb-prev').addEventListener('click', () => navLightbox(-1));
+document.getElementById('lb-next').addEventListener('click', () => navLightbox(1));
+
+document.addEventListener('keydown', e => {
+  if (!document.getElementById('lightbox').classList.contains('open')) return;
+  if (e.key === 'Escape')      closeLightbox();
+  if (e.key === 'ArrowLeft')   navLightbox(-1);
+  if (e.key === 'ArrowRight')  navLightbox(1);
+});
+
+// Click outside panel to close
+document.getElementById('lightbox').addEventListener('click', e => {
+  if (e.target === document.getElementById('lightbox')) closeLightbox();
+});
+
+// ── Utility ────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>
