@@ -376,6 +376,8 @@
     }
 
     .lb-listing-id { font-size: 1.1rem; font-weight: 700; color: #fff; }
+    .lb-ext-link { display: inline-block; margin-top: 4px; font-size: .72rem; color: #7ecfff; text-decoration: none; }
+    .lb-ext-link:hover { text-decoration: underline; }
 
     .conf-bar-track {
       height: 4px;
@@ -494,6 +496,7 @@
       <div>
         <div class="lb-section-label">Listing</div>
         <div class="lb-listing-id" id="lb-listing-id"></div>
+        <a class="lb-ext-link" id="lb-ext-link" href="" target="_blank" rel="noopener noreferrer">View on HDB ↗</a>
         <div class="conf-bar-track"><div class="conf-bar-fill" id="lb-conf-bar"></div></div>
         <div style="font-size:.72rem;color:#556;margin-top:4px" id="lb-conf-text"></div>
       </div>
@@ -785,6 +788,7 @@ function renderLightbox(focusFP) {
   document.getElementById('lb-counter').textContent = `${lbIndex + 1} / ${currentResults.length}`;
 
   document.getElementById('lb-listing-id').textContent = `Listing #${row.listing_id}`;
+  document.getElementById('lb-ext-link').href = `https://homes.hdb.gov.sg/home/resale/${row.listing_id}`;
   document.getElementById('lb-conf-bar').style.width = (conf != null ? Math.round(conf * 100) : 0) + '%';
   document.getElementById('lb-conf-text').textContent = conf != null ? `Confidence: ${Math.round(conf * 100)}%` : 'Confidence: –';
 
