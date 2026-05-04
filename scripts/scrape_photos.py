@@ -7,7 +7,8 @@ import requests
 LISTING_ID = 38260
 CDN_BASE = "https://resources.homes.hdb.gov.sg"
 API_BASE = "https://homes.hdb.gov.sg"
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "photos")
+PHOTOS_DIR = os.path.join(os.path.dirname(__file__), "..", "photos")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
 
 def fetch_image_paths(session: requests.Session, listing_id: int) -> list[str]:
@@ -69,7 +70,7 @@ def load_4room_listing_ids(hdb_json_path: str) -> list[str]:
 
 
 def scrape_single(session: requests.Session, listing_id: int) -> None:
-    output_dir = os.path.join(DATA_DIR, str(listing_id))
+    output_dir = os.path.join(PHOTOS_DIR, str(listing_id))
 
     print(f"Fetching image list for listing {listing_id} ...")
     image_paths = fetch_image_paths(session, listing_id)
@@ -98,7 +99,7 @@ def scrape_all_4room(session: requests.Session, hdb_json_path: str, skip_existin
     errors = 0
 
     for i, listing_id in enumerate(listing_ids, 1):
-        output_dir = os.path.join(DATA_DIR, str(listing_id))
+        output_dir = os.path.join(PHOTOS_DIR, str(listing_id))
         prefix = f"[{i}/{len(listing_ids)}] Listing {listing_id}"
 
         if skip_existing and os.path.isdir(output_dir) and os.listdir(output_dir):
