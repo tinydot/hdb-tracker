@@ -4,7 +4,6 @@ import os
 import time
 import requests
 
-LISTING_ID = 38260
 CDN_BASE = "https://resources.homes.hdb.gov.sg"
 API_BASE = "https://homes.hdb.gov.sg"
 PHOTOS_DIR = os.path.join(os.path.dirname(__file__), "..", "photos")
@@ -69,7 +68,8 @@ def load_4room_listing_ids(hdb_json_path: str) -> list[str]:
     return ids
 
 
-def scrape_single(session: requests.Session, listing_id: int) -> None:
+def scrape_single(session: requests.Session, listing_id: int, skip_existing: bool = True) -> bool:
+    """Returns True if files were downloaded, False if skipped/empty."""
     output_dir = os.path.join(PHOTOS_DIR, str(listing_id))
 
     print(f"Fetching image list for listing {listing_id} ...")
@@ -81,13 +81,25 @@ def scrape_single(session: requests.Session, listing_id: int) -> None:
     print(f"  Floor plans      : {len(floor_plans)}")
 
     all_to_download = photos + floor_plans
+    expected = len(all_to_download)
     if not all_to_download:
         print("  Nothing to download.")
-        return
+        return False
+
+    if skip_existing and os.path.isdir(output_dir):
+        existing = [f for f in os.listdir(output_dir)
+                    if os.path.isfile(os.path.join(output_dir, f))]
+        if len(existing) == expected:
+            print(f"  skipped ({expected} file(s) already present)")
+            return False
+        print(f"  count mismatch (have {len(existing)}, expect {expected}); re-downloading")
+        for f in existing:
+            os.remove(os.path.join(output_dir, f))
 
     print(f"  Saving to: {os.path.abspath(output_dir)}\n")
     download_images(all_to_download, output_dir)
-    print(f"  Done. {len(all_to_download)} file(s) saved.\n")
+    print(f"  Done. {expected} file(s) saved.\n")
+    return True
 
 
 def scrape_all_4room(session: requests.Session, hdb_json_path: str, skip_existing: bool) -> None:
@@ -98,56 +110,29 @@ def scrape_all_4room(session: requests.Session, hdb_json_path: str, skip_existin
     skipped = 0
     errors = 0
 
+    processed = 0
+    errors = 0
+
     for i, listing_id in enumerate(listing_ids, 1):
-        output_dir = os.path.join(PHOTOS_DIR, str(listing_id))
-        prefix = f"[{i}/{len(listing_ids)}] Listing {listing_id}"
-
-        print(f"{prefix}:")
+        print(f"[{i}/{len(listing_ids)}] ", end="")
         try:
-            image_paths = fetch_image_paths(session, int(listing_id))
-            photos, floor_plans = filter_images(image_paths)
-            all_to_download = photos + floor_plans
-            expected = len(all_to_download)
-            print(f"  {len(photos)} photo(s), {len(floor_plans)} floor plan(s)")
-
-            if not all_to_download:
-                print("  Nothing to download.")
-                continue
-
-            if skip_existing and os.path.isdir(output_dir):
-                existing = [f for f in os.listdir(output_dir)
-                            if os.path.isfile(os.path.join(output_dir, f))]
-                if len(existing) == expected:
-                    print(f"  skipped ({expected} file(s) already present)")
-                    skipped += 1
-                    continue
-                print(f"  count mismatch (have {len(existing)}, expect {expected}); re-downloading")
-                for f in existing:
-                    os.remove(os.path.join(output_dir, f))
-
-            download_images(all_to_download, output_dir)
-            total_files += len(all_to_download)
+            if scrape_single(session, int(listing_id), skip_existing=skip_existing):
+                processed += 1
         except Exception as e:
             print(f"  ERROR: {e}")
             errors += 1
             time.sleep(2)
 
-    print(f"\nAll done. {total_files} file(s) downloaded, {skipped} skipped, {errors} error(s).")
+    print(f"\nAll done. {processed} listing(s) downloaded, {errors} error(s).")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Download HDB listing photos")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
+    parser.add_argument(
         "--listing-id",
         type=int,
-        default=LISTING_ID,
-        help=f"Single listing ID to scrape (default: {LISTING_ID})",
-    )
-    group.add_argument(
-        "--all-4room",
-        action="store_true",
-        help="Scrape photos for all 4-Room resale listings in hdb.json",
+        default=None,
+        help="Scrape a single listing ID instead of all 4-Room listings",
     )
     parser.add_argument(
         "--hdb-json",
@@ -158,23 +143,23 @@ def main() -> None:
         "--skip-existing",
         action="store_true",
         default=True,
-        help="Skip listings whose output directory already exists and is non-empty (default: true)",
+        help="Skip listings whose file count matches the API (default: true)",
     )
     parser.add_argument(
         "--no-skip-existing",
         dest="skip_existing",
         action="store_false",
-        help="Re-download even if output directory already exists",
+        help="Re-download even if output directory already matches",
     )
     args = parser.parse_args()
 
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; hdb-tracker/1.0)"})
 
-    if args.all_4room:
-        scrape_all_4room(session, args.hdb_json, args.skip_existing)
+    if args.listing_id is not None:
+        scrape_single(session, args.listing_id, skip_existing=args.skip_existing)
     else:
-        scrape_single(session, args.listing_id)
+        scrape_all_4room(session, args.hdb_json, args.skip_existing)
 
 
 if __name__ == "__main__":
