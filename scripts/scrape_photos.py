@@ -102,21 +102,28 @@ def scrape_all_4room(session: requests.Session, hdb_json_path: str, skip_existin
         output_dir = os.path.join(PHOTOS_DIR, str(listing_id))
         prefix = f"[{i}/{len(listing_ids)}] Listing {listing_id}"
 
-        if skip_existing and os.path.isdir(output_dir) and os.listdir(output_dir):
-            print(f"{prefix}: skipped (already downloaded)")
-            skipped += 1
-            continue
-
         print(f"{prefix}:")
         try:
             image_paths = fetch_image_paths(session, int(listing_id))
             photos, floor_plans = filter_images(image_paths)
             all_to_download = photos + floor_plans
+            expected = len(all_to_download)
             print(f"  {len(photos)} photo(s), {len(floor_plans)} floor plan(s)")
 
             if not all_to_download:
                 print("  Nothing to download.")
                 continue
+
+            if skip_existing and os.path.isdir(output_dir):
+                existing = [f for f in os.listdir(output_dir)
+                            if os.path.isfile(os.path.join(output_dir, f))]
+                if len(existing) == expected:
+                    print(f"  skipped ({expected} file(s) already present)")
+                    skipped += 1
+                    continue
+                print(f"  count mismatch (have {len(existing)}, expect {expected}); re-downloading")
+                for f in existing:
+                    os.remove(os.path.join(output_dir, f))
 
             download_images(all_to_download, output_dir)
             total_files += len(all_to_download)
