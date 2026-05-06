@@ -54,7 +54,7 @@ def download_images(paths: list[str], output_dir: str) -> None:
         time.sleep(1)
 
 
-def load_4room_listing_ids(hdb_json_path: str) -> list[str]:
+def load_listing_ids(hdb_json_path: str, four_room_only: bool = False) -> list[str]:
     with open(hdb_json_path) as f:
         data = json.load(f)
     ids = []
@@ -63,8 +63,11 @@ def load_4room_listing_ids(hdb_json_path: str) -> list[str]:
         if props.get("listingType") != "Resale":
             continue
         desc = props.get("description", [{}])[0]
-        if desc.get("flatType") == "4-Room" and desc.get("listingId"):
-            ids.append(desc["listingId"])
+        if not desc.get("listingId"):
+            continue
+        if four_room_only and desc.get("flatType") != "4-Room":
+            continue
+        ids.append(desc["listingId"])
     return ids
 
 
@@ -102,13 +105,10 @@ def scrape_single(session: requests.Session, listing_id: int, skip_existing: boo
     return True
 
 
-def scrape_all_4room(session: requests.Session, hdb_json_path: str, skip_existing: bool) -> None:
-    listing_ids = load_4room_listing_ids(hdb_json_path)
-    print(f"Found {len(listing_ids)} 4-Room resale listings in {hdb_json_path}\n")
-
-    total_files = 0
-    skipped = 0
-    errors = 0
+def scrape_all(session: requests.Session, hdb_json_path: str, skip_existing: bool, four_room_only: bool) -> None:
+    listing_ids = load_listing_ids(hdb_json_path, four_room_only=four_room_only)
+    label = "4-Room resale" if four_room_only else "resale"
+    print(f"Found {len(listing_ids)} {label} listings in {hdb_json_path}\n")
 
     processed = 0
     errors = 0
@@ -132,7 +132,13 @@ def main() -> None:
         "--listing-id",
         type=int,
         default=None,
-        help="Scrape a single listing ID instead of all 4-Room listings",
+        help="Scrape a single listing ID instead of all listings",
+    )
+    parser.add_argument(
+        "--4room",
+        dest="four_room",
+        action="store_true",
+        help="Only scrape 4-Room resale listings",
     )
     parser.add_argument(
         "--hdb-json",
@@ -159,7 +165,7 @@ def main() -> None:
     if args.listing_id is not None:
         scrape_single(session, args.listing_id, skip_existing=args.skip_existing)
     else:
-        scrape_all_4room(session, args.hdb_json, args.skip_existing)
+        scrape_all(session, args.hdb_json, args.skip_existing, four_room_only=args.four_room)
 
 
 if __name__ == "__main__":
