@@ -2,3 +2,5 @@
 /data/.cookie
 /photos
 data/labels.db
+__pycache__/
+*.pyc
