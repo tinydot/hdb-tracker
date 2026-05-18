@@ -111,6 +111,9 @@ DESC_KEY_MAP = {
     "dist": "distance",
     "maxType": "maxFlatType",
     "maxLease": "maxRemainingLease",
+    "bltQr": "ballotQtr",
+    "lStartDt": "launchStartDate",
+    "class": "classification",
 }
 
 
