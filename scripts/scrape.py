@@ -31,7 +31,7 @@ API_URL     = "https://api.homes.hdb.gov.sg/flatback/public/v1/map/getCoordinate
 OUT_FILE    = os.path.join(os.path.dirname(__file__), "..", "data", "hdb.json")
 COOKIE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", ".cookie")
 
-PAYLOAD = {
+PAYLOAD_BASE = {
     "town": "", "location": "", "range": "2", "classification": "",
     "priceRangeLower": "0", "priceRangeUpper": "0", "flatType": "",
     "waitingTime": "", "modeOfSale": "",
@@ -42,6 +42,13 @@ PAYLOAD = {
     "coordinates": [["", ""]],
     "fullResult": True,
 }
+
+# The new API returns minimal records (id + region + stage) when modeOfSale is
+# empty. To get the rich payload (price, address, flatType, photo, area,
+# lease, …) we have to make one call per mode. "Resale" is confirmed. "BTO"
+# is a best-effort guess; if it doesn't return anything we still capture BTO
+# entries (minimal shape) from the no-mode call below.
+RICH_MODES = ["Resale", "BTO"]
 
 BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -78,11 +85,35 @@ API_HEADERS = {
 
 # ── Response normalization ─────────────────────────────────────────────────────
 # The new API returns short-key items like:
-#   {"coords": "...", "props": {"type": "Resale", "region": "...",
-#                               "desc": [{"id": "40105", ...}]}}
-# We rewrite to the legacy shape:
+#   {"coords": "...", "props": {"type": "Resale", "region": "...", "addr": "...",
+#                               "hdbCat": "0",
+#                               "desc": [{"id": "40105", "price": "...",
+#                                         "type": "4-Room", "area": "84.0 sqm",
+#                                         "createDt": "...", "dist": "-1",
+#                                         "maxType": "04", "maxLease": "60.0",
+#                                         "maxPrice": "...", "photo": "..."}]}}
+# We rewrite to the legacy shape index.html / scrape_photos.py read:
 #   {"coordinates": "...", "properties": {"listingType": "...", "region": "...",
-#                                          "description": [{"listingId": "40105", ...}]}}
+#                                          "address": "...", "hdbCategory": "0",
+#                                          "description": [{"listingId": "40105",
+#                                              "price": "...", "flatType": "...",
+#                                              "floorArea": "...", ...}]}}
+PROPS_KEY_MAP = {
+    "type": "listingType",
+    "addr": "address",
+    "hdbCat": "hdbCategory",
+    "category": "hdbCategory",
+}
+DESC_KEY_MAP = {
+    "type": "flatType",
+    "area": "floorArea",
+    "createDt": "creationDate",
+    "dist": "distance",
+    "maxType": "maxFlatType",
+    "maxLease": "maxRemainingLease",
+}
+
+
 def normalize_item(item):
     if not isinstance(item, dict):
         return item
@@ -98,7 +129,9 @@ def normalize_item(item):
     for d in props_in.get("desc") or props_in.get("description") or []:
         if not isinstance(d, dict):
             continue
-        d2 = dict(d)
+        d2 = {}
+        for k, v in d.items():
+            d2.setdefault(DESC_KEY_MAP.get(k, k), v)
         if "id" in d2:
             id_val = d2.pop("id")
             # Resale items used listingId; BTO/other used projectId.
@@ -113,18 +146,12 @@ def normalize_item(item):
         "region": props_in.get("region"),
         "description": desc_out,
     }
-    # Preserve any other top-level props fields (address, hdbCategory, etc.)
-    # that the legacy shape carried at properties top level.
+    # Preserve any other top-level props fields the legacy shape carried at
+    # properties top level (address, hdbCategory, …); remap known short keys.
     for k, v in props_in.items():
         if k in ("type", "region", "desc", "description"):
             continue
-        # Map a couple of likely renames; keep unknown keys as-is.
-        if k == "addr":
-            props_out.setdefault("address", v)
-        elif k == "category":
-            props_out.setdefault("hdbCategory", v)
-        else:
-            props_out.setdefault(k, v)
+        props_out.setdefault(PROPS_KEY_MAP.get(k, k), v)
 
     out = {"coordinates": coords, "properties": props_out}
     # Carry through any sibling keys the API tacks onto the item
@@ -136,6 +163,14 @@ def normalize_item(item):
     return out
 
 
+def _listing_id(item):
+    desc = (item.get("properties") or {}).get("description") or []
+    if not desc:
+        return None
+    d = desc[0]
+    return d.get("listingId") or d.get("projectId")
+
+
 def parse_listings(resp):
     data = resp.json()
     if not isinstance(data, list):
@@ -143,13 +178,61 @@ def parse_listings(resp):
     return [normalize_item(x) for x in data]
 
 
-def post_api(session, extra_cookie=None, xsrf=None):
+def post_api(session, mode="", extra_cookie=None, xsrf=None):
     headers = dict(API_HEADERS)
     if xsrf:
         headers["x-xsrf-token"] = xsrf
     if extra_cookie:
         headers["cookie"] = extra_cookie
-    return session.post(API_URL, headers=headers, json=PAYLOAD, timeout=30)
+    payload = {**PAYLOAD_BASE, "modeOfSale": mode}
+    return session.post(API_URL, headers=headers, json=payload, timeout=30)
+
+
+def fetch_all(session, extra_cookie=None, xsrf=None):
+    """Issue one call per mode in RICH_MODES to collect rich-shape items, plus
+    a no-mode call to pick up any listing types we didn't request explicitly.
+    Returns a merged list (legacy shape) or None if every call failed."""
+    by_id = {}            # listing/project id → normalized item (rich wins)
+    rich_ids = set()      # ids we already got rich data for
+    fallback = []         # items without a usable id (kept verbatim)
+    any_ok = False
+
+    def ingest(items, rich):
+        for item in items:
+            lid = _listing_id(item)
+            if not lid:
+                fallback.append(item)
+                continue
+            if rich:
+                by_id[lid] = item
+                rich_ids.add(lid)
+            elif lid not in rich_ids:
+                by_id.setdefault(lid, item)
+
+    for mode in RICH_MODES:
+        resp = post_api(session, mode=mode, extra_cookie=extra_cookie, xsrf=xsrf)
+        print(f"  mode={mode!r:>10} → {resp.status_code}", end="")
+        if resp.status_code != 200:
+            print()
+            continue
+        items = parse_listings(resp)
+        any_ok = True
+        print(f"  ({len(items)} items)")
+        ingest(items, rich=True)
+
+    resp = post_api(session, mode="", extra_cookie=extra_cookie, xsrf=xsrf)
+    print(f"  mode=''         → {resp.status_code}", end="")
+    if resp.status_code == 200:
+        items = parse_listings(resp)
+        any_ok = True
+        print(f"  ({len(items)} items)")
+        ingest(items, rich=False)
+    else:
+        print()
+
+    if not any_ok:
+        return None
+    return list(by_id.values()) + fallback
 
 
 def _summarize(listings):
@@ -160,19 +243,18 @@ def _summarize(listings):
     return ", ".join(f"{k}={v}" for k, v in sorted(types.items()))
 
 
+def _finish(listings):
+    if not listings:
+        return None
+    print(f"  → {len(listings)} merged items ({_summarize(listings)})")
+    return listings
+
+
 # ── Attempt 1: direct POST, no page visit ─────────────────────────────────────
 def attempt_direct():
     print("Attempt 1: direct POST (no page visit)")
     session = requests.Session()
-    resp = post_api(session)
-    print(f"  → {resp.status_code}")
-    if resp.status_code == 200:
-        listings = parse_listings(resp)
-        if listings:
-            print(f"  parsed {len(listings)} items ({_summarize(listings)})")
-            return listings
-        print("  empty response — falling through")
-    return None
+    return _finish(fetch_all(session))
 
 
 # ── Attempt 2: visit page first (requires SG IP) ──────────────────────────────
@@ -196,14 +278,7 @@ def attempt_via_page():
     else:
         print("  no XSRF-TOKEN cookie — trying without it")
 
-    resp = post_api(session, xsrf=xsrf)
-    print(f"  → {resp.status_code}")
-    if resp.status_code == 200:
-        listings = parse_listings(resp)
-        if listings:
-            print(f"  parsed {len(listings)} items ({_summarize(listings)})")
-            return listings
-    return None
+    return _finish(fetch_all(session, xsrf=xsrf))
 
 
 # ── Attempt 3: stored browser cookie ──────────────────────────────────────────
@@ -222,13 +297,10 @@ def attempt_stored_cookie():
     if xsrf:
         print(f"  XSRF-TOKEN: {xsrf[:12]}…")
     session = requests.Session()
-    resp = post_api(session, extra_cookie=cookie_str, xsrf=xsrf)
-    print(f"  → {resp.status_code}")
-    if resp.status_code == 200:
-        listings = parse_listings(resp)
-        if listings:
-            print(f"  parsed {len(listings)} items ({_summarize(listings)})")
-            return listings
+    listings = fetch_all(session, extra_cookie=cookie_str, xsrf=xsrf)
+    out = _finish(listings)
+    if out:
+        return out
     print(
         "  Cookie may be expired. Refresh it:\n"
         "  1. Open https://homes.hdb.gov.sg/home/finding-a-flat in Chrome\n"
