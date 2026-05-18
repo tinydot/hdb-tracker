@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """
-Fetches HDB listing data without a headless browser or stored secrets.
+Fetches HDB listing data.  Attempts in order:
 
-The API moved to api.homes.hdb.gov.sg/flatback/... and the response shape
-shrank (coords/props/desc/type/id). We request fullResult=true and
-normalize the response back to the legacy {coordinates, properties{...}}
-shape that index.html and scrape_photos.py consume.
-
-Attempts in order:
   1. Direct POST — no page visit, no cookies.
-     Works from any IP if the API doesn't enforce XSRF.
-     Tried first so GitHub Actions cron can run without geo issues.
-  2. Page visit first to collect XSRF-TOKEN, then POST with it.
-     Requires a Singapore IP (the page is IAM-gated outside SG).
-  3. Stored cookie fallback (HDB_COOKIE env var or data/.cookie).
+     Works if the API doesn't enforce XSRF.
+  2. Self-generated XSRF token — Angular uses the double-submit cookie
+     pattern: the server only checks that the X-XSRF-TOKEN header equals
+     the XSRF-TOKEN cookie, both values supplied by the client.  We send a
+     random UUID as both.  Works without a browser or SG IP if the API
+     trusts the pattern without a server-side secret.
+  3. Page visit via requests — captures any server-set cookies (Set-Cookie).
+     The XSRF-TOKEN is normally set by JS, so cookies will be empty, but
+     kept here in case HDB ever reverts to a server-set cookie.
+  4. Stored cookie (HDB_COOKIE env var or data/.cookie).
      Manual refresh required when it expires.
 
 Requirements:  pip install requests
@@ -23,6 +22,7 @@ import os
 import re
 import subprocess
 import sys
+import uuid
 
 import requests
 
@@ -260,9 +260,22 @@ def attempt_direct():
     return _finish(fetch_all(session))
 
 
-# ── Attempt 2: visit page first (requires SG IP) ──────────────────────────────
+# ── Attempt 2: self-generated XSRF token ─────────────────────────────────────
+def attempt_self_xsrf():
+    """Angular double-submit pattern: cookie value must equal header value.
+    The server doesn't tie the token to a server-side secret, so we can
+    supply our own UUID as both the XSRF-TOKEN cookie and X-XSRF-TOKEN header."""
+    print("Attempt 2: self-generated XSRF token (double-submit pattern)")
+    token = str(uuid.uuid4())
+    print(f"  XSRF-TOKEN: {token[:12]}…")
+    session = requests.Session()
+    cookie_header = f"XSRF-TOKEN={token}"
+    return _finish(fetch_all(session, extra_cookie=cookie_header, xsrf=token))
+
+
+# ── Attempt 3: visit page via requests (no JS) ────────────────────────────────
 def attempt_via_page():
-    print("Attempt 2: page visit + XSRF-TOKEN (requires SG IP)")
+    print("Attempt 3: page visit via requests + XSRF-TOKEN (requires SG IP)")
     session = requests.Session()
     resp = session.get(PAGE_URL, headers=PAGE_HEADERS, timeout=60)
     print(f"  GET {PAGE_URL} → {resp.status_code} (final: {resp.url})")
@@ -294,7 +307,7 @@ def attempt_stored_cookie():
     if not cookie_str:
         return None
 
-    print("Attempt 3: stored cookie (HDB_COOKIE / data/.cookie)")
+    print("Attempt 4: stored cookie (HDB_COOKIE / data/.cookie)")
     m = re.search(r'(?:^|;\s*)XSRF-TOKEN=([^\s;]+)', cookie_str)
     xsrf = m.group(1) if m else None
     if xsrf:
@@ -338,6 +351,7 @@ def git_push():
 def main():
     listings = (
         attempt_direct()
+        or attempt_self_xsrf()
         or attempt_via_page()
         or attempt_stored_cookie()
     )
