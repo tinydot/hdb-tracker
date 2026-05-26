@@ -410,7 +410,7 @@ function parseListings(arr) {
         floorArea: desc.floorArea || '—',
         remainingLease: desc.maxRemainingLease ? `${Math.floor(+desc.maxRemainingLease)} yrs` : '—',
         creationDate: desc.creationDate ? desc.creationDate.split(' ')[0] : '—',
-        photo: desc.photo ? `https://resources.homes.hdb.gov.sg/${desc.photo}` : null,
+        photo: desc.photo ? `https://resource.homes.hdb.gov.sg/${desc.photo}` : null,
         region,
       };
     } else {
@@ -794,7 +794,7 @@ function makePopup(l) {
     const thumbHtml = l.photo
       ? `<div class="popup-thumb-wrap">
            <img class="popup-thumb" src="${l.photo}" alt="" loading="lazy"
-             onerror="if(this.src.includes('://resources.homes.')){this.src=this.src.replace('://resources.homes.','://resource.homes.');}else{this.parentElement.style.display='none';}">
+             onerror="this.parentElement.style.display='none'">
            <div class="popup-thumb-label">${l.address}</div>
          </div>`
       : '';
