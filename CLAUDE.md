@@ -33,9 +33,9 @@ python3 scripts/label_photos.py --model gemma4:e4b    # override model
 
 Python deps: `pip install -r scripts/requirements.txt` (`requests`, `ollama`).
 
-## Scraper auth fallback chain (scripts/scrape.py)
+## Scraper shape (scripts/scrape.py)
 
-The HDB API is XSRF-protected. The script tries, in order: (1) direct POST, (2) self-generated UUID as both `XSRF-TOKEN` cookie and `X-XSRF-TOKEN` header (Angular double-submit pattern), (3) page visit to collect server-set cookies, (4) stored cookie from `HDB_COOKIE` env var or `data/.cookie`. When modifying scrape logic, preserve this fallback order — the earlier methods avoid the manual cookie refresh that (4) requires. Also: the API returns minimal records when `modeOfSale` is empty, so the script makes one call per mode (Resale, BTO) to get the rich payload (price, address, photo, area, lease). Don't collapse those into a single call.
+The HDB API returns minimal records when `modeOfSale` is empty, so the script makes one call per mode (Resale, BTO) to get the rich payload (price, address, photo, area, lease). Don't collapse those into a single call.
 
 ## Label vocabulary is fixed
 
