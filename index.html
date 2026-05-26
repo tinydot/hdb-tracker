@@ -7,7 +7,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <style>
 :root {
   --bg:#f5f6f8; --panel:#ffffff; --border:#e2e5eb;
@@ -314,6 +317,14 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
   attribution: '© OpenStreetMap © CARTO', maxZoom: 19
 }).addTo(map);
 setTimeout(() => map.invalidateSize(), 150);
+
+const listingCluster = L.markerClusterGroup({
+  showCoverageOnHover: false,
+  spiderfyOnMaxZoom: true,
+  disableClusteringAtZoom: 18,
+  maxClusterRadius: 28,
+  spiderfyDistanceMultiplier: 1.4
+}).addTo(map);
 
 // ═══════════════════════════════════════════════════════
 // INDEXEDDB
@@ -750,12 +761,13 @@ function makeIcon(l) {
 function renderMarkers(data) {
   computePriceBreaks(data);
   updateLegend();
-  activeMarkers.forEach(m => map.removeLayer(m));
+  listingCluster.clearLayers();
   activeMarkers = [];
   data.forEach(l => {
-    const m = L.marker([l.lat, l.lng], { icon: makeIcon(l) }).addTo(map);
+    const m = L.marker([l.lat, l.lng], { icon: makeIcon(l) });
     m.bindPopup(makePopup(l), { maxWidth: 290 });
     m.on('click', () => highlightCard(l.listingId));
+    listingCluster.addLayer(m);
     activeMarkers.push(m);
     l._marker = m;
   });
@@ -1044,8 +1056,9 @@ function focusListing(id) {
   const l = allListings.find(x => x.listingId === id);
   if (!l || !l._marker) return;
   switchTab(document.querySelector('.tab[data-tab="map"]'));
-  map.setView([l.lat, l.lng], 16);
-  l._marker.openPopup();
+  listingCluster.zoomToShowLayer(l._marker, () => {
+    l._marker.openPopup();
+  });
   highlightCard(id);
 }
 
@@ -1107,7 +1120,7 @@ async function confirmClearDB() {
   await dbClear('listings');
   await dbClear('snapshots');
   allListings = [];
-  activeMarkers.forEach(m => map.removeLayer(m));
+  listingCluster.clearLayers();
   activeMarkers = [];
   document.getElementById('listing-list').innerHTML = '<div class="empty-state">Database cleared.</div>';
   document.getElementById('changes-list').innerHTML = '<div class="empty-state">No changes detected yet.</div>';
