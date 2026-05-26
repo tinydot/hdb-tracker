@@ -329,14 +329,24 @@ const listingCluster = L.markerClusterGroup({
 // ═══════════════════════════════════════════════════════
 // INDEXEDDB
 // ═══════════════════════════════════════════════════════
-const DB_NAME = 'hdb-tracker', DB_VER = 1;
+const DB_NAME = 'hdb-tracker', DB_VER = 2;
 let db = null;
+
+const PHOTO_BASE = 'https://resource.homes.hdb.gov.sg/';
+function photoPath(p) {
+  if (!p) return null;
+  return p.replace(/^https?:\/\/[^/]+\//, '');
+}
+function photoUrl(p) {
+  return p ? PHOTO_BASE + photoPath(p) : null;
+}
 
 function openDB() {
   return new Promise((res, rej) => {
     const req = indexedDB.open(DB_NAME, DB_VER);
     req.onupgradeneeded = e => {
       const d = e.target.result;
+      const tx = e.target.transaction;
       // listings: one record per unique listingId, stores full current state + price history
       if (!d.objectStoreNames.contains('listings')) {
         const s = d.createObjectStore('listings', { keyPath: 'listingId' });
@@ -346,6 +356,22 @@ function openDB() {
       // snapshots: one record per import batch
       if (!d.objectStoreNames.contains('snapshots')) {
         d.createObjectStore('snapshots', { keyPath: 'id', autoIncrement: true });
+      }
+      // v2: photo field used to be a full URL with the legacy host
+      // (resources.homes.hdb.gov.sg). Strip the host so we store only the
+      // relative path and rebuild the URL at render time.
+      if (e.oldVersion < 2 && d.objectStoreNames.contains('listings')) {
+        const store = tx.objectStore('listings');
+        store.openCursor().onsuccess = ev => {
+          const cur = ev.target.result;
+          if (!cur) return;
+          const v = cur.value;
+          if (v.photo && /^https?:\/\//.test(v.photo)) {
+            v.photo = photoPath(v.photo);
+            cur.update(v);
+          }
+          cur.continue();
+        };
       }
     };
     req.onsuccess = e => { db = e.target.result; res(db); };
@@ -421,7 +447,7 @@ function parseListings(arr) {
         floorArea: desc.floorArea || '—',
         remainingLease: desc.maxRemainingLease ? `${Math.floor(+desc.maxRemainingLease)} yrs` : '—',
         creationDate: desc.creationDate ? desc.creationDate.split(' ')[0] : '—',
-        photo: desc.photo ? `https://resource.homes.hdb.gov.sg/${desc.photo}` : null,
+        photo: desc.photo || null,
         region,
       };
     } else {
@@ -805,7 +831,7 @@ function makePopup(l) {
   } else {
     const thumbHtml = l.photo
       ? `<div class="popup-thumb-wrap">
-           <img class="popup-thumb" src="${l.photo}" alt="" loading="lazy"
+           <img class="popup-thumb" src="${photoUrl(l.photo)}" alt="" loading="lazy"
              onerror="this.parentElement.style.display='none'">
            <div class="popup-thumb-label">${l.address}</div>
          </div>`
