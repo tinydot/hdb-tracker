@@ -794,7 +794,7 @@ function makePopup(l) {
     const thumbHtml = l.photo
       ? `<div class="popup-thumb-wrap">
            <img class="popup-thumb" src="${l.photo}" alt="" loading="lazy"
-             onerror="this.parentElement.style.display='none'">
+             onerror="if(this.src.includes('://resources.homes.')){this.src=this.src.replace('://resources.homes.','://resource.homes.');}else{this.parentElement.style.display='none';}">
            <div class="popup-thumb-label">${l.address}</div>
          </div>`
       : '';
