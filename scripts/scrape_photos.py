@@ -4,7 +4,7 @@ import os
 import time
 import requests
 
-CDN_BASE = "https://resources.homes.hdb.gov.sg"
+CDN_BASE = "https://resource.homes.hdb.gov.sg"
 API_BASE = "https://homes.hdb.gov.sg"
 PHOTOS_DIR = os.path.join(os.path.dirname(__file__), "..", "photos")
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
