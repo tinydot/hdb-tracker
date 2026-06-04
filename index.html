@@ -179,12 +179,6 @@ input[type=range]{flex:1;accent-color:var(--resale);}
   </div>
 </header>
 
-<div class="tab-bar">
-  <div class="tab active" data-tab="map" onclick="switchTab(this)">Map</div>
-  <div class="tab" data-tab="changes" onclick="switchTab(this)">Changes <span class="badge badge-all" id="tab-changes-badge">0</span></div>
-  <div class="tab" data-tab="history" onclick="switchTab(this)">History</div>
-</div>
-
 <div class="main">
   <div class="sidebar">
     <div class="sidebar-top">
@@ -1023,6 +1017,7 @@ function renderChangesTab(changes) {
 
 function updateChangeBadge(n) {
   const badge = document.getElementById('tab-changes-badge');
+  if (!badge) return;
   badge.textContent = n;
   badge.style.display = n ? '' : 'none';
 }
