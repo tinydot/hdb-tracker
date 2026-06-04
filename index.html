@@ -196,7 +196,7 @@ input[type=range]{flex:1;accent-color:var(--resale);}
     <div class="filter-bar">
       <div>
         <div class="filter-label">Listing Type</div>
-        <div class="chips">
+        <div class="chips" id="type-chips">
           <div class="chip" data-val="all" onclick="setTypeFilter(this)">All</div>
           <div class="chip active-r active" data-val="Resale" onclick="setTypeFilter(this)">Resale</div>
           <div class="chip" data-val="BTO" onclick="setTypeFilter(this)">BTO</div>
@@ -237,7 +237,7 @@ input[type=range]{flex:1;accent-color:var(--resale);}
           <span>Status</span>
           <span id="hide-delisted-toggle" onclick="toggleHideDelisted()" style="font-size:9px;cursor:pointer;color:var(--accent);font-weight:600;user-select:none;">Hide delisted</span>
         </div>
-        <div class="chips">
+        <div class="chips" id="status-chips">
           <div class="chip active" data-val="all" onclick="setStatusFilter(this)">All</div>
           <div class="chip" data-val="new" onclick="setStatusFilter(this)">New</div>
           <div class="chip" data-val="drop" onclick="setStatusFilter(this)">↓ Drop</div>
@@ -426,6 +426,64 @@ let filters = { type: 'Resale', maxPrice: 1500000, flats: new Set(['4-Room', '5-
 let currentTab = 'map';
 
 // ═══════════════════════════════════════════════════════
+// FILTER PERSISTENCE (localStorage)
+// ═══════════════════════════════════════════════════════
+const FILTER_STORAGE_KEY = 'hdb-tracker-filters-v1';
+
+function saveFilters() {
+  try {
+    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
+      type: filters.type,
+      maxPrice: filters.maxPrice,
+      flats: [...filters.flats],
+      minLease: filters.minLease,
+      regions: [...filters.regions],
+      status: filters.status,
+      hideDelisted: filters.hideDelisted,
+    }));
+  } catch(e) { /* storage unavailable — ignore */ }
+}
+
+function loadFilters() {
+  try {
+    const raw = localStorage.getItem(FILTER_STORAGE_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (s.type) filters.type = s.type;
+    if (typeof s.maxPrice === 'number') filters.maxPrice = s.maxPrice;
+    if (Array.isArray(s.flats)) filters.flats = new Set(s.flats);
+    if (typeof s.minLease === 'number') filters.minLease = s.minLease;
+    if (Array.isArray(s.regions)) filters.regions = new Set(s.regions);
+    if (s.status) filters.status = s.status;
+    if (typeof s.hideDelisted === 'boolean') filters.hideDelisted = s.hideDelisted;
+  } catch(e) { /* corrupt/unavailable — fall back to defaults */ }
+}
+
+// Sync DOM controls to the (possibly restored) filters state.
+// Flat/region chips are handled in buildFlatChips/buildRegionChips.
+function syncFilterUI() {
+  document.getElementById('price-range').value = filters.maxPrice;
+  document.getElementById('lease-range').value = filters.minLease;
+
+  document.querySelectorAll('#type-chips .chip').forEach(c => {
+    c.classList.remove('active', 'active-r', 'active-b');
+    if (c.dataset.val === filters.type) {
+      c.classList.add(filters.type === 'Resale' ? 'active-r' : filters.type === 'BTO' ? 'active-b' : 'active');
+    }
+  });
+
+  document.querySelectorAll('#status-chips .chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.val === filters.status);
+  });
+
+  const toggle = document.getElementById('hide-delisted-toggle');
+  toggle.style.color = filters.hideDelisted ? 'var(--accent)' : 'var(--muted)';
+  toggle.style.fontWeight = filters.hideDelisted ? '600' : 'normal';
+}
+
+loadFilters();
+
+// ═══════════════════════════════════════════════════════
 // PARSE SCRAPED JSON → normalised listing objects
 // ═══════════════════════════════════════════════════════
 function parseListings(arr) {
@@ -609,6 +667,7 @@ async function processImport(parsed) {
 async function loadFromDB() {
   const records = await dbGetAll('listings');
   allListings = records;
+  syncFilterUI();
   buildFlatChips();
   buildRegionChips();
   applyFilters();
@@ -698,6 +757,7 @@ function applyFilters() {
   renderMarkers(filtered);
   renderList(filtered);
   updateStats(filtered);
+  saveFilters();
 }
 
 function buildFlatChips() {
