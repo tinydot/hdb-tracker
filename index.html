@@ -858,7 +858,7 @@ function makePopup(l) {
   const c = isBTO ? 'var(--bto)' : priceColor(l.price);
   const badgeClass = isBTO ? 'badge-bto' : 'badge-resale';
   const changePart = l.changeType && l.changeType !== 'unchanged'
-    ? `<div style="margin-top:6px;">${changeBadgeHtml(l.changeType, l.price, l.prevPrice)}</div>` : '';
+    ? `<div style="margin-top:6px;">${changeBadgeHtml(l.changeType, l.price, l.prevPrice ?? l.lastPriceChangeFrom)}</div>` : '';
 
   // price history rows (last 5)
   let historyHtml = '';
@@ -942,7 +942,7 @@ function renderList(data) {
       : [l.flatType, l.floorArea, `${l.remainingLease} lease`].filter(x => x && x !== '—');
 
     const prevBadge = l.changeType && l.changeType !== 'unchanged'
-      ? changeBadgeHtml(l.changeType, l.price, l.prevPrice) : '';
+      ? changeBadgeHtml(l.changeType, l.price, l.prevPrice ?? l.lastPriceChangeFrom) : '';
 
     const staleItems = [];
     if (l.firstSeen) staleItems.push(`seen ${relTime(l.firstSeen)}`);
