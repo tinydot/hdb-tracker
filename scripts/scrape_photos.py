@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import time
+import uuid
 import requests
 
 CDN_BASE = "https://resource.homes.hdb.gov.sg"
@@ -10,31 +11,48 @@ API_BASE = "https://api.homes.hdb.gov.sg"
 PHOTOS_DIR = os.path.join(os.path.dirname(__file__), "..", "photos")
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
 
-def ensure_xsrf_token(session: requests.Session, listing_id: int) -> str | None:
-    """Prime the session against the site so it picks up an XSRF-TOKEN cookie.
 
-    The API host (api.homes.hdb.gov.sg) rejects requests that don't echo the
-    XSRF-TOKEN cookie back in the x-xsrf-token header. Visiting the listing page
-    on the site host sets that cookie (scoped to .homes.hdb.gov.sg), so it is
-    also sent to the API subdomain.
+def _extract_image_list(payload: dict) -> list[str]:
+    """Pull the image paths out of the response.
+
+    The flatback API returns image paths split across "scannedList" and
+    "unscannedList"; merge both. ("imageList" is the legacy key, kept as a
+    fallback in case the endpoint ever reverts.)
     """
-    if not session.cookies.get("XSRF-TOKEN"):
-        session.get(f"{SITE_BASE}/home/resale/{listing_id}", timeout=15)
-    return session.cookies.get("XSRF-TOKEN")
+    if not isinstance(payload, dict):
+        return []
+    paths: list[str] = []
+    for key in ("scannedList", "unscannedList", "imageList"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            paths.extend(value)
+    return paths
 
 
 def fetch_image_paths(session: requests.Session, listing_id: int) -> list[str]:
-    xsrf_token = ensure_xsrf_token(session, listing_id)
-
+    # Angular double-submit XSRF pattern (same as scripts/scrape.py): the API
+    # only checks that the X-XSRF-TOKEN header equals the XSRF-TOKEN cookie, both
+    # client-supplied. A self-generated UUID satisfies it — no page visit needed.
+    token = str(uuid.uuid4())
     headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/plain, */*",
-        "Origin": SITE_BASE,
-        "Referer": f"{SITE_BASE}/",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US,en;q=0.9",
+        "content-type": "application/json",
+        "origin": SITE_BASE,
+        "referer": f"{SITE_BASE}/",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "user-agent": BROWSER_UA,
+        "cookie": f"XSRF-TOKEN={token}",
+        "x-xsrf-token": token,
     }
-    if xsrf_token:
-        headers["X-XSRF-TOKEN"] = xsrf_token
 
     api_url = f"{API_BASE}/flatback/public/v1/resale/getAllImagesByListing"
     resp = session.post(
@@ -44,7 +62,10 @@ def fetch_image_paths(session: requests.Session, listing_id: int) -> list[str]:
         timeout=15,
     )
     resp.raise_for_status()
-    return resp.json().get("imageList", [])
+    payload = resp.json()
+    if os.environ.get("HDB_DEBUG"):
+        print(f"  [debug] response: {json.dumps(payload)[:500]}")
+    return _extract_image_list(payload)
 
 
 def filter_images(image_paths: list[str]) -> tuple[list[str], list[str]]:
@@ -53,7 +74,7 @@ def filter_images(image_paths: list[str]) -> tuple[list[str], list[str]]:
     return photos, floor_plans
 
 
-def download_images(paths: list[str], output_dir: str) -> None:
+def download_images(session: requests.Session, paths: list[str], output_dir: str) -> None:
     os.makedirs(output_dir, exist_ok=True)
     for path in paths:
         url = f"{CDN_BASE}/{path}"
@@ -61,7 +82,12 @@ def download_images(paths: list[str], output_dir: str) -> None:
         dest = os.path.join(output_dir, filename)
 
         print(f"Downloading {filename} ...", end=" ", flush=True)
-        resp = requests.get(url, stream=True, timeout=30)
+        resp = session.get(
+            url,
+            stream=True,
+            timeout=30,
+            headers={"Referer": f"{SITE_BASE}/"},
+        )
         resp.raise_for_status()
 
         with open(dest, "wb") as f:
@@ -118,7 +144,7 @@ def scrape_single(session: requests.Session, listing_id: int, skip_existing: boo
             os.remove(os.path.join(output_dir, f))
 
     print(f"  Saving to: {os.path.abspath(output_dir)}\n")
-    download_images(all_to_download, output_dir)
+    download_images(session, all_to_download, output_dir)
     print(f"  Done. {expected} file(s) saved.\n")
     return True
 
@@ -178,12 +204,7 @@ def main() -> None:
     args = parser.parse_args()
 
     session = requests.Session()
-    session.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
-        )
-    })
+    session.headers.update({"User-Agent": BROWSER_UA})
 
     if args.listing_id is not None:
         scrape_single(session, args.listing_id, skip_existing=args.skip_existing)
