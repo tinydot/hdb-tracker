@@ -74,7 +74,7 @@ def filter_images(image_paths: list[str]) -> tuple[list[str], list[str]]:
     return photos, floor_plans
 
 
-def download_images(paths: list[str], output_dir: str) -> None:
+def download_images(session: requests.Session, paths: list[str], output_dir: str) -> None:
     os.makedirs(output_dir, exist_ok=True)
     for path in paths:
         url = f"{CDN_BASE}/{path}"
@@ -82,7 +82,12 @@ def download_images(paths: list[str], output_dir: str) -> None:
         dest = os.path.join(output_dir, filename)
 
         print(f"Downloading {filename} ...", end=" ", flush=True)
-        resp = requests.get(url, stream=True, timeout=30)
+        resp = session.get(
+            url,
+            stream=True,
+            timeout=30,
+            headers={"Referer": f"{SITE_BASE}/"},
+        )
         resp.raise_for_status()
 
         with open(dest, "wb") as f:
@@ -139,7 +144,7 @@ def scrape_single(session: requests.Session, listing_id: int, skip_existing: boo
             os.remove(os.path.join(output_dir, f))
 
     print(f"  Saving to: {os.path.abspath(output_dir)}\n")
-    download_images(all_to_download, output_dir)
+    download_images(session, all_to_download, output_dir)
     print(f"  Done. {expected} file(s) saved.\n")
     return True
 
