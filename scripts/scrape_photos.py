@@ -19,20 +19,20 @@ BROWSER_UA = (
 
 
 def _extract_image_list(payload: dict) -> list[str]:
-    """Pull the image path list out of the response, tolerant of a wrapper.
+    """Pull the image paths out of the response.
 
-    The legacy endpoint returned {"imageList": [...]} at the top level; the
-    flatback API may nest it under a "data" envelope. Check both.
+    The flatback API returns image paths split across "scannedList" and
+    "unscannedList"; merge both. ("imageList" is the legacy key, kept as a
+    fallback in case the endpoint ever reverts.)
     """
-    if isinstance(payload, dict):
-        if isinstance(payload.get("imageList"), list):
-            return payload["imageList"]
-        data = payload.get("data")
-        if isinstance(data, dict) and isinstance(data.get("imageList"), list):
-            return data["imageList"]
-        if isinstance(data, list):
-            return data
-    return []
+    if not isinstance(payload, dict):
+        return []
+    paths: list[str] = []
+    for key in ("scannedList", "unscannedList", "imageList"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            paths.extend(value)
+    return paths
 
 
 def fetch_image_paths(session: requests.Session, listing_id: int) -> list[str]:
