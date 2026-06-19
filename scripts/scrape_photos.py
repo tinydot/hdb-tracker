@@ -12,39 +12,70 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
 
 def ensure_xsrf_token(session: requests.Session, listing_id: int) -> str | None:
-    """Prime the session against the site so it picks up an XSRF-TOKEN cookie.
+    """Prime the session so it picks up an XSRF-TOKEN cookie.
 
     The API host (api.homes.hdb.gov.sg) rejects requests that don't echo the
     XSRF-TOKEN cookie back in the x-xsrf-token header. Visiting the listing page
     on the site host sets that cookie (scoped to .homes.hdb.gov.sg), so it is
-    also sent to the API subdomain.
+    also sent to the API subdomain. If that doesn't seed the cookie, the API's
+    own 403 response issues one, so the first POST is retried (see below).
     """
     if not session.cookies.get("XSRF-TOKEN"):
         session.get(f"{SITE_BASE}/home/resale/{listing_id}", timeout=15)
     return session.cookies.get("XSRF-TOKEN")
 
 
-def fetch_image_paths(session: requests.Session, listing_id: int) -> list[str]:
-    xsrf_token = ensure_xsrf_token(session, listing_id)
+def _extract_image_list(payload: dict) -> list[str]:
+    """Pull the image path list out of the response, tolerant of a wrapper.
 
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/plain, */*",
-        "Origin": SITE_BASE,
-        "Referer": f"{SITE_BASE}/",
-    }
-    if xsrf_token:
-        headers["X-XSRF-TOKEN"] = xsrf_token
+    The legacy endpoint returned {"imageList": [...]} at the top level; the
+    flatback API may nest it under a "data" envelope. Check both.
+    """
+    if isinstance(payload, dict):
+        if isinstance(payload.get("imageList"), list):
+            return payload["imageList"]
+        data = payload.get("data")
+        if isinstance(data, dict) and isinstance(data.get("imageList"), list):
+            return data["imageList"]
+        if isinstance(data, list):
+            return data
+    return []
+
+
+def fetch_image_paths(session: requests.Session, listing_id: int) -> list[str]:
+    ensure_xsrf_token(session, listing_id)
 
     api_url = f"{API_BASE}/flatback/public/v1/resale/getAllImagesByListing"
-    resp = session.post(
-        api_url,
-        json={"listingId": str(listing_id)},
-        headers=headers,
-        timeout=15,
-    )
+
+    resp = None
+    # The first request often 403s because no valid XSRF token exists yet; the
+    # 403 response itself issues a fresh XSRF-TOKEN cookie, so retry once with it.
+    for attempt in range(2):
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/plain, */*",
+            "Origin": SITE_BASE,
+            "Referer": f"{SITE_BASE}/",
+        }
+        token = session.cookies.get("XSRF-TOKEN")
+        if token:
+            headers["X-XSRF-TOKEN"] = token
+
+        resp = session.post(
+            api_url,
+            json={"listingId": str(listing_id)},
+            headers=headers,
+            timeout=15,
+        )
+        if resp.status_code == 403 and attempt == 0:
+            continue
+        break
+
     resp.raise_for_status()
-    return resp.json().get("imageList", [])
+    payload = resp.json()
+    if os.environ.get("HDB_DEBUG"):
+        print(f"  [debug] response: {json.dumps(payload)[:500]}")
+    return _extract_image_list(payload)
 
 
 def filter_images(image_paths: list[str]) -> tuple[list[str], list[str]]:
