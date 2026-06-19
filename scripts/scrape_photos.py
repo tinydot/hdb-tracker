@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import time
+import uuid
 import requests
 
 CDN_BASE = "https://resource.homes.hdb.gov.sg"
@@ -10,19 +11,11 @@ API_BASE = "https://api.homes.hdb.gov.sg"
 PHOTOS_DIR = os.path.join(os.path.dirname(__file__), "..", "photos")
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
-
-def ensure_xsrf_token(session: requests.Session, listing_id: int) -> str | None:
-    """Prime the session so it picks up an XSRF-TOKEN cookie.
-
-    The API host (api.homes.hdb.gov.sg) rejects requests that don't echo the
-    XSRF-TOKEN cookie back in the x-xsrf-token header. Visiting the listing page
-    on the site host sets that cookie (scoped to .homes.hdb.gov.sg), so it is
-    also sent to the API subdomain. If that doesn't seed the cookie, the API's
-    own 403 response issues one, so the first POST is retried (see below).
-    """
-    if not session.cookies.get("XSRF-TOKEN"):
-        session.get(f"{SITE_BASE}/home/resale/{listing_id}", timeout=15)
-    return session.cookies.get("XSRF-TOKEN")
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
 
 
 def _extract_image_list(payload: dict) -> list[str]:
@@ -43,34 +36,31 @@ def _extract_image_list(payload: dict) -> list[str]:
 
 
 def fetch_image_paths(session: requests.Session, listing_id: int) -> list[str]:
-    ensure_xsrf_token(session, listing_id)
+    # Angular double-submit XSRF pattern (same as scripts/scrape.py): the API
+    # only checks that the X-XSRF-TOKEN header equals the XSRF-TOKEN cookie, both
+    # client-supplied. A self-generated UUID satisfies it — no page visit needed.
+    token = str(uuid.uuid4())
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US,en;q=0.9",
+        "content-type": "application/json",
+        "origin": SITE_BASE,
+        "referer": f"{SITE_BASE}/",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "user-agent": BROWSER_UA,
+        "cookie": f"XSRF-TOKEN={token}",
+        "x-xsrf-token": token,
+    }
 
     api_url = f"{API_BASE}/flatback/public/v1/resale/getAllImagesByListing"
-
-    resp = None
-    # The first request often 403s because no valid XSRF token exists yet; the
-    # 403 response itself issues a fresh XSRF-TOKEN cookie, so retry once with it.
-    for attempt in range(2):
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/plain, */*",
-            "Origin": SITE_BASE,
-            "Referer": f"{SITE_BASE}/",
-        }
-        token = session.cookies.get("XSRF-TOKEN")
-        if token:
-            headers["X-XSRF-TOKEN"] = token
-
-        resp = session.post(
-            api_url,
-            json={"listingId": str(listing_id)},
-            headers=headers,
-            timeout=15,
-        )
-        if resp.status_code == 403 and attempt == 0:
-            continue
-        break
-
+    resp = session.post(
+        api_url,
+        json={"listingId": str(listing_id)},
+        headers=headers,
+        timeout=15,
+    )
     resp.raise_for_status()
     payload = resp.json()
     if os.environ.get("HDB_DEBUG"):
@@ -209,12 +199,7 @@ def main() -> None:
     args = parser.parse_args()
 
     session = requests.Session()
-    session.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
-        )
-    })
+    session.headers.update({"User-Agent": BROWSER_UA})
 
     if args.listing_id is not None:
         scrape_single(session, args.listing_id, skip_existing=args.skip_existing)
