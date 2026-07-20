@@ -98,7 +98,7 @@ def download_images(session: requests.Session, paths: list[str], output_dir: str
         time.sleep(1)
 
 
-def load_listing_ids(hdb_json_path: str, four_room_only: bool = False) -> list[str]:
+def load_listing_ids(hdb_json_path: str, flat_type: str = None) -> list[str]:
     with open(hdb_json_path) as f:
         data = json.load(f)
     ids = []
@@ -109,7 +109,7 @@ def load_listing_ids(hdb_json_path: str, four_room_only: bool = False) -> list[s
         desc = props.get("description", [{}])[0]
         if not desc.get("listingId"):
             continue
-        if four_room_only and desc.get("flatType") != "4-Room":
+        if flat_type and desc.get("flatType") != flat_type:
             continue
         ids.append(desc["listingId"])
     return ids
@@ -149,9 +149,9 @@ def scrape_single(session: requests.Session, listing_id: int, skip_existing: boo
     return True
 
 
-def scrape_all(session: requests.Session, hdb_json_path: str, skip_existing: bool, four_room_only: bool) -> None:
-    listing_ids = load_listing_ids(hdb_json_path, four_room_only=four_room_only)
-    label = "4-Room resale" if four_room_only else "resale"
+def scrape_all(session: requests.Session, hdb_json_path: str, skip_existing: bool, flat_type: str) -> None:
+    listing_ids = load_listing_ids(hdb_json_path, flat_type=flat_type)
+    label = f"{flat_type} resale" if flat_type else "resale"
     print(f"Found {len(listing_ids)} {label} listings in {hdb_json_path}\n")
 
     processed = 0
@@ -185,6 +185,12 @@ def main() -> None:
         help="Only scrape 4-Room resale listings",
     )
     parser.add_argument(
+        "--5room",
+        dest="five_room",
+        action="store_true",
+        help="Only scrape 5-Room resale listings",
+    )
+    parser.add_argument(
         "--hdb-json",
         default=os.path.join(DATA_DIR, "hdb.json"),
         help="Path to hdb.json (default: data/hdb.json)",
@@ -203,13 +209,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.four_room and args.five_room:
+        parser.error("--4room and --5room are mutually exclusive")
+
     session = requests.Session()
     session.headers.update({"User-Agent": BROWSER_UA})
 
     if args.listing_id is not None:
         scrape_single(session, args.listing_id, skip_existing=args.skip_existing)
     else:
-        scrape_all(session, args.hdb_json, args.skip_existing, four_room_only=args.four_room)
+        flat_type = "4-Room" if args.four_room else "5-Room" if args.five_room else None
+        scrape_all(session, args.hdb_json, args.skip_existing, flat_type=flat_type)
 
 
 if __name__ == "__main__":

@@ -5,3 +5,5 @@ data/labels.db
 __pycache__/
 *.pyc
 .DS_Store
+.venv/
+data/gemma_rows_backup.json
