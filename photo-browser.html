@@ -238,7 +238,12 @@
       color: #1a1a2e;
       padding: 2px 7px;
       border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background .12s, color .12s;
     }
+    .listing-badge:hover { background: #e94560; color: #fff; }
 
     .conf-badge {
       font-size: .65rem;
@@ -379,6 +384,23 @@
     .lb-ext-link { display: inline-block; margin-top: 4px; font-size: .72rem; color: #7ecfff; text-decoration: none; }
     .lb-ext-link:hover { text-decoration: underline; }
 
+    .lb-browse-btn {
+      display: block;
+      width: 100%;
+      margin-top: 9px;
+      background: #e94560;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: .76rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background .12s;
+    }
+    .lb-browse-btn:hover { background: #c73652; }
+
     .conf-bar-track {
       height: 4px;
       background: #222;
@@ -399,6 +421,13 @@
     .lb-tag.mood { background: #2a1020; color: #f48fb1; }
 
     .lb-justification { font-size: .78rem; line-height: 1.55; color: #889; }
+
+    /* SigLIP score bars in panel */
+    .sig-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .sig-tag { font-size: .72rem; color: #9ab; width: 92px; flex-shrink: 0; }
+    .sig-bar-track { flex: 1; height: 4px; background: #222; border-radius: 2px; overflow: hidden; }
+    .sig-bar-fill { height: 100%; background: #e94560; border-radius: 2px; }
+    .sig-val { font-size: .68rem; color: #778; width: 36px; text-align: right; flex-shrink: 0; }
 
     /* Floor plan thumbnails in panel */
     .fp-section { display: flex; flex-direction: column; gap: 8px; }
@@ -434,10 +463,13 @@
     <div class="section-label">Listing ID</div>
     <input class="listing-input" type="number" id="listing-input" placeholder="e.g. 38260">
 
+    <div class="section-label" id="flat-label">Flat Type</div>
+    <div class="chip-grid" id="flat-chips"></div>
+
     <div class="section-label">Rooms</div>
     <div class="chip-grid" id="room-chips"></div>
 
-    <div class="section-label">Moods</div>
+    <div class="section-label" id="moods-label">Moods</div>
     <div class="chip-grid" id="mood-chips"></div>
 
     <div class="section-label">Min Confidence</div>
@@ -454,8 +486,7 @@
     </div>
 
     <div class="btn-row">
-      <button class="apply-btn" id="apply-btn">Apply</button>
-      <button class="reset-btn" id="reset-btn">Reset</button>
+      <button class="reset-btn" id="reset-btn" style="flex:1">Reset filters</button>
     </div>
 
     <div class="result-count" id="result-count"></div>
@@ -497,6 +528,7 @@
         <div class="lb-section-label">Listing</div>
         <div class="lb-listing-id" id="lb-listing-id"></div>
         <a class="lb-ext-link" id="lb-ext-link" href="" target="_blank" rel="noopener noreferrer">View on HDB ↗</a>
+        <button class="lb-browse-btn" id="lb-browse-btn">Browse all photos in this listing</button>
         <div class="conf-bar-track"><div class="conf-bar-fill" id="lb-conf-bar"></div></div>
         <div style="font-size:.72rem;color:#556;margin-top:4px" id="lb-conf-text"></div>
       </div>
@@ -506,12 +538,17 @@
         <div class="lb-tags" id="lb-rooms"></div>
       </div>
 
-      <div>
+      <div id="lb-sig-section">
+        <div class="lb-section-label">SigLIP Top Matches</div>
+        <div id="lb-sig"></div>
+      </div>
+
+      <div id="lb-moods-section">
         <div class="lb-section-label">Moods</div>
         <div class="lb-tags" id="lb-moods"></div>
       </div>
 
-      <div>
+      <div id="lb-notes-section">
         <div class="lb-section-label">Notes</div>
         <div class="lb-justification" id="lb-just"></div>
       </div>
@@ -530,6 +567,7 @@ const ROOMS = ['living_room','bedroom','kitchen','toilet','dining','balcony',
                'study','corridor','entryway','storeroom','utility_yard','exterior','other'];
 const MOODS = ['japandi','scandinavian','minimalist','modern','industrial','retro',
                'traditional','luxe','homey','cozy','eclectic','messy','cluttered','empty'];
+const FLAT_TYPES = ['4-Room','5-Room'];
 
 const PAGE_SIZE = 120;
 
@@ -538,28 +576,80 @@ let SQL = null;
 let db = null;
 let activeRooms = new Set();
 let activeMoods = new Set();
+let activeFlats = new Set();
+let flatTypeMap = null;    // listing_id → flatType, from data/hdb.json (null until loaded)
 let sortMode = 'conf_desc';
 let currentResults = [];   // full query result rows
 let renderedCount = 0;
 let lbIndex = 0;
 let fpCache = {};          // listing_id → [{filename, path}]
 
+const debounce = (fn, ms) => { let t; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; };
+const liveApply = debounce(applyFilters, 180);
+
 // ── sql.js init ────────────────────────────────────────────────────────────
 initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.12.0/${f}` })
-  .then(s => { SQL = s; })
+  .then(s => { SQL = s; tryAutoLoadDb(); })
   .catch(e => console.error('sql.js failed to load:', e));
 
+// When served from the repo root, data/labels.db is one fetch away — load it
+// so the file picker is only needed as a fallback (e.g. GitHub Pages).
+async function tryAutoLoadDb() {
+  if (db) return;
+  try {
+    const resp = await fetch('data/labels.db');
+    if (!resp.ok) return;
+    const buf = await resp.arrayBuffer();
+    if (db) return;
+    db = new SQL.Database(new Uint8Array(buf));
+    onDbLoaded('data/labels.db (auto-loaded)');
+  } catch { /* file:// or Pages — use the Load button */ }
+}
+
+// listing → flat type, for the Flat Type filter
+fetch('data/hdb.json')
+  .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+  .then(data => {
+    flatTypeMap = {};
+    data.forEach(item => {
+      const props = item.properties || {};
+      if (props.listingType !== 'Resale') return;
+      const desc = (props.description || [{}])[0];
+      if (desc.listingId) flatTypeMap[+desc.listingId] = desc.flatType;
+    });
+    if (activeFlats.size > 0) applyFilters();
+  })
+  .catch(() => {
+    document.getElementById('flat-label').style.display = 'none';
+    document.getElementById('flat-chips').style.display = 'none';
+  });
+
+function onDbLoaded(label) {
+  fpCache = {};
+  document.getElementById('status').textContent = label;
+  // The current DB is SigLIP-labeled with no moods — hide the dead filter
+  // unless this DB actually contains mood tags (e.g. Gemma-labeled).
+  let hasMoods = false;
+  try {
+    hasMoods = db.exec("SELECT 1 FROM photo_labels WHERE moods != '[]' AND moods != '' LIMIT 1").length > 0;
+  } catch { /* keep hidden */ }
+  document.getElementById('moods-label').style.display = hasMoods ? '' : 'none';
+  document.getElementById('mood-chips').style.display = hasMoods ? '' : 'none';
+  applyFilters();
+}
+
 // ── Build sidebar chips ────────────────────────────────────────────────────
-function buildChips(containerId, items, activeSet) {
+function buildChips(containerId, items, activeSet, pretty = true) {
   const el = document.getElementById(containerId);
   items.forEach(v => {
     const btn = document.createElement('button');
     btn.className = 'chip';
-    btn.textContent = v.replace(/_/g, ' ');
+    btn.textContent = pretty ? v.replace(/_/g, ' ') : v;
     btn.dataset.value = v;
     btn.addEventListener('click', () => {
       const on = btn.classList.toggle('active');
       on ? activeSet.add(v) : activeSet.delete(v);
+      applyFilters();
     });
     el.appendChild(btn);
   });
@@ -567,12 +657,14 @@ function buildChips(containerId, items, activeSet) {
 
 buildChips('room-chips', ROOMS, activeRooms);
 buildChips('mood-chips', MOODS, activeMoods);
+buildChips('flat-chips', FLAT_TYPES, activeFlats, false);
 
 // ── Confidence slider ──────────────────────────────────────────────────────
 const confSlider = document.getElementById('conf-slider');
 const confValEl  = document.getElementById('conf-val');
 confSlider.addEventListener('input', () => {
   confValEl.textContent = confSlider.value + '%';
+  liveApply();
 });
 
 // ── Sort buttons ───────────────────────────────────────────────────────────
@@ -581,6 +673,7 @@ document.querySelectorAll('.sort-btn').forEach(btn => {
     document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     sortMode = btn.dataset.sort;
+    applyFilters();
   });
 });
 
@@ -591,18 +684,15 @@ document.getElementById('db-file-input').addEventListener('change', async e => {
   if (!SQL) { alert('sql.js is still loading — try again in a moment.'); return; }
   const buf = await file.arrayBuffer();
   db = new SQL.Database(new Uint8Array(buf));
-  fpCache = {};
-  document.getElementById('status').textContent = `${file.name} loaded`;
-  applyFilters();
+  onDbLoaded(`${file.name} loaded`);
   e.target.value = '';
 });
 
-// ── Apply / Reset ──────────────────────────────────────────────────────────
-document.getElementById('apply-btn').addEventListener('click', applyFilters);
-
+// ── Reset ──────────────────────────────────────────────────────────────────
 document.getElementById('reset-btn').addEventListener('click', () => {
   activeRooms.clear();
   activeMoods.clear();
+  activeFlats.clear();
   document.querySelectorAll('.chip.active').forEach(c => c.classList.remove('active'));
   confSlider.value = 0;
   confValEl.textContent = '0%';
@@ -613,8 +703,33 @@ document.getElementById('reset-btn').addEventListener('click', () => {
   applyFilters();
 });
 
-document.getElementById('listing-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') applyFilters();
+document.getElementById('listing-input').addEventListener('input', liveApply);
+
+// ── Browse one listing ─────────────────────────────────────────────────────
+// Pin the sidebar to a single listing and drop the tag/confidence filters, so
+// "I like this kitchen — show me the rest of the flat" lands on every photo of
+// it rather than just the other kitchens.
+function browseListing(listingId) {
+  activeRooms.clear();
+  activeMoods.clear();
+  document.querySelectorAll('#room-chips .chip.active, #mood-chips .chip.active')
+    .forEach(c => c.classList.remove('active'));
+  confSlider.value = 0;
+  confValEl.textContent = '0%';
+  document.getElementById('listing-input').value = listingId;
+
+  document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('.sort-btn[data-sort="listing"]').classList.add('active');
+  sortMode = 'listing';
+
+  closeLightbox();
+  applyFilters();
+  document.getElementById('main-area').scrollTop = 0;
+}
+
+document.getElementById('lb-browse-btn').addEventListener('click', () => {
+  const row = currentResults[lbIndex];
+  if (row) browseListing(row.listing_id);
 });
 
 // ── Query builder ──────────────────────────────────────────────────────────
@@ -645,17 +760,31 @@ function buildQuery() {
   const order = { conf_desc: 'confidence DESC', conf_asc: 'confidence ASC', listing: 'listing_id ASC, filename ASC' }[sortMode];
 
   return `
-    SELECT listing_id, filename, path, rooms, moods, justification, confidence
+    SELECT listing_id, filename, path, rooms, moods, justification, confidence, model
     FROM photo_labels
     WHERE ${clauses.join(' AND ')}
     ORDER BY ${order}
   `;
 }
 
+// "SigLIP zero-shot: kitchen=0.62, dining=0.18, other=0.00" → [{tag, score}]
+function parseSiglipScores(just) {
+  if (!just || !just.startsWith('SigLIP')) return null;
+  const m = just.match(/:\s*(.+)$/);
+  if (!m) return null;
+  const out = [];
+  m[1].split(',').forEach(part => {
+    const [tag, val] = part.trim().split('=');
+    const score = parseFloat(val);
+    if (tag && !isNaN(score)) out.push({ tag, score });
+  });
+  return out.length ? out : null;
+}
+
 // ── Run filters ────────────────────────────────────────────────────────────
 function applyFilters() {
   if (!db) return;
-  const rows = [];
+  let rows = [];
   try {
     const res = db.exec(buildQuery());
     if (res.length > 0) {
@@ -671,6 +800,8 @@ function applyFilters() {
   } catch (err) {
     console.error('Query error:', err);
   }
+  if (activeFlats.size > 0 && flatTypeMap !== null)
+    rows = rows.filter(r => activeFlats.has(flatTypeMap[r.listing_id]));
   currentResults = rows;
   renderedCount  = 0;
   renderGrid(true);
@@ -703,10 +834,17 @@ function renderGrid(reset) {
     const hasFP = fps.length > 0;
 
     const conf = row.confidence;
-    const confCls = conf == null ? 'conf-none' : conf >= 0.75 ? 'conf-high' : conf >= 0.5 ? 'conf-mid' : 'conf-low';
+    // SigLIP sigmoid scores run much lower than VLM self-reported confidence —
+    // a correct top-1 is often 0.05-0.5, so use lower green/amber cutoffs.
+    const isSiglip = (row.model || '').includes('siglip');
+    const [hi, mid] = isSiglip ? [0.2, 0.05] : [0.75, 0.5];
+    const confCls = conf == null ? 'conf-none' : conf >= hi ? 'conf-high' : conf >= mid ? 'conf-mid' : 'conf-low';
     const confTxt = conf == null ? '–' : Math.round(conf * 100) + '%';
 
-    const roomHtml = row.rooms.slice(0, 4).map(r => `<span class="tag">${r.replace(/_/g,' ')}</span>`).join('');
+    const sig = parseSiglipScores(row.justification);
+    const roomHtml = sig
+      ? sig.slice(0, 3).map(s => `<span class="tag">${s.tag.replace(/_/g,' ')} ${Math.round(s.score * 100)}%</span>`).join('')
+      : row.rooms.slice(0, 4).map(r => `<span class="tag">${r.replace(/_/g,' ')}</span>`).join('');
     const moodHtml = row.moods.slice(0, 3).map(m => `<span class="tag mood">${m}</span>`).join('');
 
     const card = document.createElement('div');
@@ -720,7 +858,7 @@ function renderGrid(reset) {
       </button>
       <div class="card-body">
         <div class="card-top">
-          <span class="listing-badge">#${row.listing_id}</span>
+          <button class="listing-badge" title="Browse all photos in listing #${row.listing_id}">#${row.listing_id}</button>
           <span class="conf-badge ${confCls}">${confTxt}</span>
         </div>
         <div class="tag-row">${roomHtml}${moodHtml}</div>
@@ -729,6 +867,11 @@ function renderGrid(reset) {
     card.querySelector('.fp-pill').addEventListener('click', e => {
       e.stopPropagation();
       if (hasFP) openLightbox(idx, true);
+    });
+
+    card.querySelector('.listing-badge').addEventListener('click', e => {
+      e.stopPropagation();
+      browseListing(row.listing_id);
     });
 
     card.addEventListener('click', () => openLightbox(idx, false));
@@ -787,16 +930,35 @@ function renderLightbox(focusFP) {
   document.getElementById('lb-title').textContent = row.filename;
   document.getElementById('lb-counter').textContent = `${lbIndex + 1} / ${currentResults.length}`;
 
-  document.getElementById('lb-listing-id').textContent = `Listing #${row.listing_id}`;
+  const flatType = flatTypeMap ? flatTypeMap[row.listing_id] : null;
+  document.getElementById('lb-listing-id').textContent = `Listing #${row.listing_id}` + (flatType ? ` · ${flatType}` : '');
   document.getElementById('lb-ext-link').href = `https://homes.hdb.gov.sg/home/resale/${row.listing_id}`;
   document.getElementById('lb-conf-bar').style.width = (conf != null ? Math.round(conf * 100) : 0) + '%';
   document.getElementById('lb-conf-text').textContent = conf != null ? `Confidence: ${Math.round(conf * 100)}%` : 'Confidence: –';
 
   document.getElementById('lb-rooms').innerHTML =
     row.rooms.map(r => `<span class="lb-tag">${r.replace(/_/g,' ')}</span>`).join('') || '<span style="color:#334;font-size:.72rem">–</span>';
+
+  // SigLIP rows: score bars (widths relative to the top match, since raw
+  // sigmoid scores are small); other models keep the free-text Notes.
+  const sig = parseSiglipScores(row.justification);
+  document.getElementById('lb-sig-section').style.display = sig ? '' : 'none';
+  document.getElementById('lb-notes-section').style.display = sig ? 'none' : '';
+  if (sig) {
+    const maxScore = Math.max(sig[0].score, 1e-6);
+    document.getElementById('lb-sig').innerHTML = sig.slice(0, 3).map(s => `
+      <div class="sig-row">
+        <span class="sig-tag">${s.tag.replace(/_/g,' ')}</span>
+        <div class="sig-bar-track"><div class="sig-bar-fill" style="width:${Math.max(2, Math.round(s.score / maxScore * 100))}%"></div></div>
+        <span class="sig-val">${Math.round(s.score * 100)}%</span>
+      </div>`).join('');
+  } else {
+    document.getElementById('lb-just').textContent = row.justification || '–';
+  }
+
+  document.getElementById('lb-moods-section').style.display = row.moods.length ? '' : 'none';
   document.getElementById('lb-moods').innerHTML =
-    row.moods.map(m => `<span class="lb-tag mood">${m}</span>`).join('') || '<span style="color:#334;font-size:.72rem">–</span>';
-  document.getElementById('lb-just').textContent = row.justification || '–';
+    row.moods.map(m => `<span class="lb-tag mood">${m}</span>`).join('');
 
   // Nav buttons
   document.getElementById('lb-prev').disabled = lbIndex <= 0;
