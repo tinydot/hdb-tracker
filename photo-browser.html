@@ -238,7 +238,12 @@
       color: #1a1a2e;
       padding: 2px 7px;
       border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background .12s, color .12s;
     }
+    .listing-badge:hover { background: #e94560; color: #fff; }
 
     .conf-badge {
       font-size: .65rem;
@@ -379,6 +384,23 @@
     .lb-ext-link { display: inline-block; margin-top: 4px; font-size: .72rem; color: #7ecfff; text-decoration: none; }
     .lb-ext-link:hover { text-decoration: underline; }
 
+    .lb-browse-btn {
+      display: block;
+      width: 100%;
+      margin-top: 9px;
+      background: #e94560;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: .76rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background .12s;
+    }
+    .lb-browse-btn:hover { background: #c73652; }
+
     .conf-bar-track {
       height: 4px;
       background: #222;
@@ -506,6 +528,7 @@
         <div class="lb-section-label">Listing</div>
         <div class="lb-listing-id" id="lb-listing-id"></div>
         <a class="lb-ext-link" id="lb-ext-link" href="" target="_blank" rel="noopener noreferrer">View on HDB ↗</a>
+        <button class="lb-browse-btn" id="lb-browse-btn">Browse all photos in this listing</button>
         <div class="conf-bar-track"><div class="conf-bar-fill" id="lb-conf-bar"></div></div>
         <div style="font-size:.72rem;color:#556;margin-top:4px" id="lb-conf-text"></div>
       </div>
@@ -682,6 +705,33 @@ document.getElementById('reset-btn').addEventListener('click', () => {
 
 document.getElementById('listing-input').addEventListener('input', liveApply);
 
+// ── Browse one listing ─────────────────────────────────────────────────────
+// Pin the sidebar to a single listing and drop the tag/confidence filters, so
+// "I like this kitchen — show me the rest of the flat" lands on every photo of
+// it rather than just the other kitchens.
+function browseListing(listingId) {
+  activeRooms.clear();
+  activeMoods.clear();
+  document.querySelectorAll('#room-chips .chip.active, #mood-chips .chip.active')
+    .forEach(c => c.classList.remove('active'));
+  confSlider.value = 0;
+  confValEl.textContent = '0%';
+  document.getElementById('listing-input').value = listingId;
+
+  document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('.sort-btn[data-sort="listing"]').classList.add('active');
+  sortMode = 'listing';
+
+  closeLightbox();
+  applyFilters();
+  document.getElementById('main-area').scrollTop = 0;
+}
+
+document.getElementById('lb-browse-btn').addEventListener('click', () => {
+  const row = currentResults[lbIndex];
+  if (row) browseListing(row.listing_id);
+});
+
 // ── Query builder ──────────────────────────────────────────────────────────
 function buildQuery() {
   const minConf   = parseInt(confSlider.value, 10) / 100;
@@ -808,7 +858,7 @@ function renderGrid(reset) {
       </button>
       <div class="card-body">
         <div class="card-top">
-          <span class="listing-badge">#${row.listing_id}</span>
+          <button class="listing-badge" title="Browse all photos in listing #${row.listing_id}">#${row.listing_id}</button>
           <span class="conf-badge ${confCls}">${confTxt}</span>
         </div>
         <div class="tag-row">${roomHtml}${moodHtml}</div>
@@ -817,6 +867,11 @@ function renderGrid(reset) {
     card.querySelector('.fp-pill').addEventListener('click', e => {
       e.stopPropagation();
       if (hasFP) openLightbox(idx, true);
+    });
+
+    card.querySelector('.listing-badge').addEventListener('click', e => {
+      e.stopPropagation();
+      browseListing(row.listing_id);
     });
 
     card.addEventListener('click', () => openLightbox(idx, false));
