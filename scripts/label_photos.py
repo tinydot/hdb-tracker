@@ -12,6 +12,7 @@ import ollama
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = SCRIPT_DIR.parent / "photos"
 DEFAULT_DB = SCRIPT_DIR.parent / "data" / "labels.db"
+DEFAULT_HDB_JSON = SCRIPT_DIR.parent / "data" / "hdb.json"
 DEFAULT_MODEL = "gemma4:31b"
 DEFAULT_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
@@ -124,14 +125,33 @@ def upsert_label(conn: sqlite3.Connection, row: dict) -> None:
     conn.commit()
 
 
-def iter_photos(data_dir: Path, only_listing: int | None):
+def load_flat_types(hdb_json_path: Path) -> dict[int, str]:
+    with open(hdb_json_path) as f:
+        data = json.load(f)
+    flat_types = {}
+    for item in data:
+        props = item.get("properties", {})
+        if props.get("listingType") != "Resale":
+            continue
+        desc = props.get("description", [{}])[0]
+        listing_id = desc.get("listingId")
+        if not listing_id:
+            continue
+        flat_types[int(listing_id)] = desc.get("flatType")
+    return flat_types
+
+
+def iter_photos(data_dir: Path, only_listing: int | None, flat_type: str | None = None, hdb_json_path: Path | None = None):
     if not data_dir.is_dir():
         return
+    flat_types = load_flat_types(hdb_json_path) if flat_type else {}
     for listing_dir in sorted(data_dir.iterdir()):
         if not listing_dir.is_dir() or not listing_dir.name.isdigit():
             continue
         listing_id = int(listing_dir.name)
         if only_listing is not None and listing_id != only_listing:
+            continue
+        if flat_type and flat_types.get(listing_id) != flat_type:
             continue
         for img in sorted(listing_dir.iterdir()):
             if not img.is_file():
@@ -219,10 +239,17 @@ def main() -> int:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--host", default=DEFAULT_HOST, help="Ollama server URL")
     parser.add_argument("--listing-id", type=int, default=None, help="Label only this listing")
+    parser.add_argument("--4room", dest="four_room", action="store_true", help="Only label 4-Room resale listings")
+    parser.add_argument("--5room", dest="five_room", action="store_true", help="Only label 5-Room resale listings")
+    parser.add_argument("--hdb-json", type=Path, default=DEFAULT_HDB_JSON, help="Path to hdb.json (default: data/hdb.json)")
     parser.add_argument("--limit", type=int, default=None, help="Stop after N photos")
     parser.add_argument("--relabel", action="store_true", help="Re-label photos already in the DB")
     parser.add_argument("--dry-run", action="store_true", help="Don't call the model; just print what would be done")
     args = parser.parse_args()
+
+    if args.four_room and args.five_room:
+        parser.error("--4room and --5room are mutually exclusive")
+    flat_type = "4-Room" if args.four_room else "5-Room" if args.five_room else None
 
     conn = open_db(args.db)
     client = ollama.Client(host=args.host)
@@ -234,7 +261,7 @@ def main() -> int:
     errors = 0
     t0 = time.time()
 
-    for listing_id, img_path in iter_photos(args.data_dir, args.listing_id):
+    for listing_id, img_path in iter_photos(args.data_dir, args.listing_id, flat_type=flat_type, hdb_json_path=args.hdb_json):
         if args.limit is not None and labeled >= args.limit:
             break
         total += 1

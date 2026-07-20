@@ -1,6 +1,37 @@
 # Quick Start — Photo Labeling
 
-End-to-end: bring up a Gemma-on-Ollama host, scrape HDB listing photos, label them into SQLite.
+Scrape HDB listing photos, label them into SQLite. Two labeling backends write to the same `data/labels.db`:
+
+| | `label_photos_clip.py` (SigLIP) | `label_photos.py` (Gemma) |
+|---|---|---|
+| Labels | rooms only (`moods` empty) | rooms + moods + justification |
+| Hardware | any Mac (Apple Silicon GPU via MPS) or CPU | GPU host running Ollama |
+| Speed | ~26 photos/s on a base M1 | 0.5–5 s/photo depending on model/GPU |
+
+**SigLIP is the default choice** — it labels the entire photo set in minutes on a laptop and its room labels are what `photo-browser.html` filters on. Use the Gemma path only if you need mood/aesthetic tags.
+
+## Fast path: SigLIP room labels (local, no GPU host)
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r scripts/requirements-clip.txt
+
+# Label every unlabelled photo (idempotent; ~10 min for 12k photos on M1):
+.venv/bin/python scripts/label_photos_clip.py
+
+# Same flags as the Gemma labeler:
+.venv/bin/python scripts/label_photos_clip.py --listing-id 38260
+.venv/bin/python scripts/label_photos_clip.py --limit 50        # smoke test
+.venv/bin/python scripts/label_photos_clip.py --relabel         # overwrite existing rows
+
+# Include extra rooms beyond the top match when their score clears the bar
+# (SigLIP sigmoid scores run low; default 0.15 is effectively top-1):
+.venv/bin/python scripts/label_photos_clip.py --threshold 0.05
+```
+
+Zero-shot classification with `google/siglip2-base-patch16-224` (~800 MB, downloaded from Hugging Face on first run). Needs Python 3.10+. `confidence` stores the top sigmoid score and `justification` the top-3 scores; rows carry `model = google/siglip2-base-patch16-224` so they are distinguishable from Gemma rows.
+
+The rest of this guide covers the Gemma-on-Ollama path.
 
 ## 1. Prerequisites on the remote host
 
@@ -67,8 +98,9 @@ Results are written to `data/labels.db` (SQLite). Re-running is idempotent — o
 ## 5. Incremental runs (new listings each week)
 
 ```bash
-python3 scripts/scrape_photos.py --all-4room      # downloads only new listings
-python3 scripts/label_photos.py                   # labels only new photos
+python3 scripts/scrape_photos.py --all-4room             # downloads only new listings
+.venv/bin/python scripts/label_photos_clip.py            # labels only new photos (SigLIP)
+# or: python3 scripts/label_photos.py                    # Gemma, if you want moods
 ```
 
 ## 6. Querying results
@@ -115,7 +147,9 @@ Because the output is constrained to a fixed label vocabulary and temperature is
 
 **Moods** (multi-label, up to 3): `japandi`, `scandinavian`, `minimalist`, `modern`, `industrial`, `retro`, `traditional`, `luxe`, `homey`, `cozy`, `eclectic`, `messy`, `cluttered`, `empty`
 
-Floor plans (filenames containing `-FP-`) are tagged directly from the filename and never sent to the model.
+Floor plans (filenames containing `-FP-`) are tagged directly from the filename and never sent to the model (both labelers).
+
+SigLIP only produces room tags, via the `ROOM_PROMPTS` mapping in `scripts/label_photos_clip.py` — keep its keys a subset of `ROOMS` in `scripts/label_photos.py` so the two labelers and `photo-browser.html` stay in sync.
 
 ## Performance notes
 
