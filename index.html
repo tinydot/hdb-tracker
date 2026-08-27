@@ -470,9 +470,7 @@ function syncFilterUI() {
     c.classList.toggle('active', c.dataset.val === filters.status);
   });
 
-  const toggle = document.getElementById('hide-delisted-toggle');
-  toggle.style.color = filters.hideDelisted ? 'var(--accent)' : 'var(--muted)';
-  toggle.style.fontWeight = filters.hideDelisted ? '600' : 'normal';
+  syncDelistToggle();
 }
 
 loadFilters();
@@ -705,14 +703,23 @@ function setStatusFilter(el) {
   el.parentElement.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
   el.classList.add('active');
   filters.status = el.dataset.val;
+  syncDelistToggle();
   applyFilters();
+}
+
+function syncDelistToggle() {
+  const toggle = document.getElementById('hide-delisted-toggle');
+  const overridden = filters.status === 'delist';
+  const on = filters.hideDelisted && !overridden;
+  toggle.style.color = on ? 'var(--accent)' : 'var(--muted)';
+  toggle.style.fontWeight = on ? '600' : 'normal';
+  toggle.style.textDecoration = filters.hideDelisted && overridden ? 'line-through' : 'none';
+  toggle.title = overridden ? 'Ignored while the Delisted filter is selected' : '';
 }
 
 function toggleHideDelisted() {
   filters.hideDelisted = !filters.hideDelisted;
-  const toggle = document.getElementById('hide-delisted-toggle');
-  toggle.style.color = filters.hideDelisted ? 'var(--accent)' : 'var(--muted)';
-  toggle.style.fontWeight = filters.hideDelisted ? '600' : 'normal';
+  syncDelistToggle();
   applyFilters();
 }
 
@@ -737,7 +744,8 @@ function applyFilters() {
       if (isNaN(leaseNum) || leaseNum < filters.minLease) return false;
     }
     if (filters.regions.size > 0 && !filters.regions.has(l.region)) return false;
-    if (filters.hideDelisted && l.status === 'delisted') return false;
+    // The Delisted chip is an explicit request for delisted listings — it overrides Hide delisted.
+    if (filters.hideDelisted && filters.status !== 'delist' && l.status === 'delisted') return false;
     if (filters.status !== 'all') {
       if (filters.status === 'delist' && l.status !== 'delisted') return false;
       if (filters.status === 'drop' && l.changeType !== 'drop') return false;
