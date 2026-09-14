@@ -141,6 +141,7 @@ input[type=range]{flex:1;accent-color:var(--resale);}
 
 /* ── MAP LAYER TOGGLES ── */
 .layer-btns{display:flex;flex-direction:column;gap:3px;margin-top:2px;}
+.layer-hint{margin-top:5px;font-size:8px;line-height:1.35;color:var(--muted);opacity:.75;}
 .layer-btn{padding:3px 8px;border-radius:4px;font-size:9px;cursor:pointer;border:1px solid var(--border);color:var(--muted);background:transparent;transition:all .15s;user-select:none;text-align:center;white-space:nowrap;}
 .layer-btn:hover{border-color:var(--muted);color:var(--text);}
 .layer-btn.active{background:#eef0f4;color:var(--text);border-color:var(--text);font-weight:600;}
@@ -273,6 +274,7 @@ input[type=range]{flex:1;accent-color:var(--resale);}
         <div class="layer-btn" id="lt-bus" onclick="toggleLayer('bus')">🚌 Bus Stops</div>
         <div class="layer-btn" id="lt-school" onclick="toggleLayer('school')">🏫 Schools</div>
       </div>
+      <div class="layer-hint">Click any overlay icon to toggle its 1 km / 2 km rings</div>
     </div>
   </div>
 
@@ -1266,6 +1268,32 @@ const LAYER_CFG = {
             color:'#f59e0b', radius:6, label:'Schools', btnLabel:'🏫 Schools' }
 };
 
+// 1 km / 2 km catchment rings, toggled by clicking an overlay icon.
+// Rings live inside the overlay's own layer group, so turning the overlay
+// off (or back on) takes its rings with it.
+const RADIUS_RINGS = [
+  { m: 1000, dashArray: null,  opacity: 0.9,  fillOpacity: 0.07 },
+  { m: 2000, dashArray: '6,6', opacity: 0.55, fillOpacity: 0.04 }
+];
+
+function bindRadiusRings(layer, lat, lon, color, grp) {
+  layer.on('click', () => {
+    if (layer._radiusRings) {
+      layer._radiusRings.forEach(c => grp.removeLayer(c));
+      layer._radiusRings = null;
+      return;
+    }
+    layer._radiusRings = RADIUS_RINGS.map(r => {
+      const c = L.circle([lat, lon], {
+        radius: r.m, color, weight: 1.5, opacity: r.opacity, dashArray: r.dashArray,
+        fillColor: color, fillOpacity: r.fillOpacity, interactive: false
+      }).addTo(grp);
+      if (c.bringToBack) c.bringToBack();
+      return c;
+    });
+  });
+}
+
 async function toggleLayer(type) {
   const btn = document.getElementById('lt-' + type);
   if (layerActive[type]) {
@@ -1300,8 +1328,9 @@ async function toggleLayer(type) {
           iconSize: [20, 20],
           iconAnchor: [10, 10]
         });
-        L.marker([lat, lon], { icon })
+        const mk = L.marker([lat, lon], { icon })
           .bindPopup(`<b style="font-size:11px;font-family:'DM Mono',monospace">${name}</b>`).addTo(grp);
+        bindRadiusRings(mk, lat, lon, cfg.color, grp);
       } else if (type === 'school') {
         const icon = L.divIcon({
           className: '',
@@ -1309,13 +1338,15 @@ async function toggleLayer(type) {
           iconSize: [20, 20],
           iconAnchor: [10, 10]
         });
-        L.marker([lat, lon], { icon })
+        const mk = L.marker([lat, lon], { icon })
           .bindPopup(`<b style="font-size:11px;font-family:'DM Mono',monospace">${name}</b>`).addTo(grp);
+        bindRadiusRings(mk, lat, lon, cfg.color, grp);
       } else {
-        L.circleMarker([lat, lon], {
+        const mk = L.circleMarker([lat, lon], {
           radius: cfg.radius, color: cfg.color, fillColor: cfg.color,
           fillOpacity: 0.75, weight: 1.5, opacity: 1
         }).bindPopup(`<b style="font-size:11px;font-family:'DM Mono',monospace">${name}</b>`).addTo(grp);
+        bindRadiusRings(mk, lat, lon, cfg.color, grp);
       }
     });
     overlayLayers[type] = grp;
