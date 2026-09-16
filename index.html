@@ -306,9 +306,16 @@ input[type=range]{flex:1;accent-color:var(--resale);}
 // ═══════════════════════════════════════════════════════
 // MAP SETUP
 // ═══════════════════════════════════════════════════════
-const map = L.map('map', { center: [1.434241657877235, 103.84358940058439], zoom: 15 });
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-  attribution: '© OpenStreetMap © CARTO', maxZoom: 19
+// OneMap (Singapore Land Authority) tiles: free, no API key. Coverage is
+// Singapore only, zoom 11–19, so the map is bounded to match.
+const SG_BOUNDS = L.latLngBounds([1.144, 103.535], [1.494, 104.1]);
+const map = L.map('map', {
+  center: [1.434241657877235, 103.84358940058439], zoom: 15,
+  minZoom: 11, maxZoom: 19, maxBounds: SG_BOUNDS, maxBoundsViscosity: 1.0
+});
+L.tileLayer('https://www.onemap.gov.sg/maps/tiles/Grey/{z}/{x}/{y}.png', {
+  minZoom: 11, maxZoom: 19, bounds: SG_BOUNDS,
+  attribution: '<img src="https://www.onemap.gov.sg/web-assets/images/logo/om_logo.png" style="height:14px;width:14px;vertical-align:-3px"/>&nbsp;<a href="https://www.onemap.gov.sg/" target="_blank" rel="noopener noreferrer">OneMap</a>&nbsp;&copy;&nbsp;contributors&nbsp;&#124;&nbsp;<a href="https://www.sla.gov.sg/" target="_blank" rel="noopener noreferrer">Singapore Land Authority</a>'
 }).addTo(map);
 setTimeout(() => map.invalidateSize(), 150);
 
