@@ -13,7 +13,7 @@ Two loosely-coupled halves that share `data/`:
 
 Both share the same `photo_labels` schema and idempotent skip logic; rows are distinguished by the `model` column. The current `labels.db` is uniformly SigLIP-labeled (plus `filename-heuristic` floor-plan rows).
 
-The two halves are independent: the labelers read `data/hdb.json` only to enumerate 4-Room resale listings. CI never runs them.
+The two halves are independent: the labelers read `data/hdb.json` only to enumerate resale listings by flat type (`--3room`/`--4room`/`--5room`, combinable, or `--345room`; no flag labels every downloaded photo). CI never runs them.
 
 ## Common commands
 
@@ -21,9 +21,12 @@ The two halves are independent: the labelers read `data/hdb.json` only to enumer
 # Listings (runs in CI daily; manually for local refresh):
 python3 scripts/scrape.py
 
-# Photos — one listing or every 4-Room resale (idempotent, skips downloaded):
+# Photos — one listing, or resale listings by flat type (flags combine; idempotent, skips downloaded):
 python3 scripts/scrape_photos.py --listing-id 38260
-python3 scripts/scrape_photos.py --all-4room
+python3 scripts/scrape_photos.py --4room                 # 4-Room only
+python3 scripts/scrape_photos.py --3room --4room --5room # any mix of flat types
+python3 scripts/scrape_photos.py --345room               # shorthand for 3-, 4- and 5-Room
+python3 scripts/scrape_photos.py                         # every resale listing (all flat types)
 
 # Label with SigLIP (default) — idempotent, only new photos hit the model:
 .venv/bin/python scripts/label_photos_clip.py                  # everything unlabelled
