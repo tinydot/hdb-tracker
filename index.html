@@ -71,9 +71,14 @@ input[type=range]{flex:1;accent-color:var(--resale);}
 .listing-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
 
 /* ── CARDS ── */
-.listing-card{padding:9px 11px;border-radius:6px;border:1px solid var(--border);margin-bottom:5px;cursor:pointer;transition:all .15s;background:var(--bg);position:relative;}
+.listing-card{display:flex;padding:0;overflow:hidden;border-radius:6px;border:1px solid var(--border);margin-bottom:5px;cursor:pointer;transition:all .15s;background:var(--bg);position:relative;}
 .listing-card:hover{border-color:#c5cad6;background:#eef0f4;}
 .listing-card.active{border-color:var(--accent)!important;background:#eef0f4;}
+.card-thumb{flex:0 0 96px;min-height:72px;position:relative;background:#eaecf1;}
+.card-thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+.card-thumb-empty{display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--muted);}
+.card-body{flex:1;min-width:0;padding:9px 11px;}
+.list-count{font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);padding:6px 12px 0;}
 .card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;}
 .card-price{font-family:'DM Mono',monospace;font-size:13px;font-weight:500;}
 .card-badges{display:flex;gap:4px;align-items:center;flex-wrap:wrap;justify-content:flex-end;}
@@ -243,6 +248,7 @@ input[type=range]{flex:1;accent-color:var(--resale);}
       </div>
     </div>
 
+    <div class="list-count" id="list-count"></div>
     <div class="listing-list" id="listing-list">
       <div class="empty-state">Click "Load Data" above to fetch listings.</div>
     </div>
@@ -425,6 +431,8 @@ function dbClear(storeName) {
 // ═══════════════════════════════════════════════════════
 let allListings = [];      // currently displayed (with change metadata)
 let activeMarkers = [];
+let currentFiltered = [];  // output of applyFilters, before the map-viewport cut
+let activeCardId = null;
 let filters = { type: 'Resale', maxPrice: 1500000, flats: new Set(['4-Room', '5-Room']), minLease: 65, regions: new Set(['NORTH REGION']), status: 'all', hideDelisted: true };
 let currentTab = 'map';
 
@@ -765,6 +773,7 @@ function applyFilters() {
     return true;
   });
 
+  currentFiltered = filtered;
   renderMarkers(filtered);
   renderList(filtered);
   updateStats(filtered);
@@ -936,9 +945,17 @@ function makePopup(l) {
 // ═══════════════════════════════════════════════════════
 // RENDER SIDEBAR LIST
 // ═══════════════════════════════════════════════════════
-function renderList(data) {
+// Re-cut the list to the visible map area whenever the view changes.
+map.on('moveend resize', () => renderList(currentFiltered));
+
+function renderList(filtered) {
   const el = document.getElementById('listing-list');
-  if (!data.length) { el.innerHTML = '<div class="empty-state">No listings match current filters.</div>'; return; }
+  const countEl = document.getElementById('list-count');
+  const bounds = map.getBounds();
+  const data = filtered.filter(l => bounds.contains([l.lat, l.lng]));
+  countEl.textContent = filtered.length ? `${data.length} in view · ${filtered.length} total` : '';
+  if (!filtered.length) { el.innerHTML = '<div class="empty-state">No listings match current filters.</div>'; return; }
+  if (!data.length) { el.innerHTML = '<div class="empty-state">No listings in the visible map area.<br>Zoom out or pan to see more.</div>'; return; }
 
   const sorted = [...data].sort((a, b) => {
     // priority: changes first, then by price
@@ -958,32 +975,47 @@ function renderList(data) {
       ? [l.stage, `Ballot ${l.ballotQtr}`].filter(x => x && x !== '—' && x !== 'Ballot —')
       : [l.flatType, l.floorArea, `${l.remainingLease} lease`].filter(x => x && x !== '—');
 
-    const prevBadge = l.changeType && l.changeType !== 'unchanged'
+    const prevBadge = l.changeType && !['unchanged', 'new', 'delist'].includes(l.changeType)
       ? changeBadgeHtml(l.changeType, l.price, l.prevPrice ?? l.lastPriceChangeFrom) : '';
+    // Resale is the default, so only BTO / delisted get a type badge.
+    const typeBadge = isDelist ? `<div class="type-badge ${typeClass}">✕ Delisted</div>`
+      : isBTO ? `<div class="type-badge ${typeClass}">BTO</div>` : '';
 
     const staleItems = [];
-    if (l.firstSeen) staleItems.push(`seen ${relTime(l.firstSeen)}`);
+    // HDB's listing date (YYYY-MM-DD, local); fall back to when we first saw it (BTO has none).
+    const listedAt = l.creationDate && l.creationDate !== '—' ? new Date(l.creationDate + 'T00:00') : l.firstSeen && new Date(l.firstSeen);
+    if (listedAt) {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const days = Math.round((today - new Date(listedAt).setHours(0, 0, 0, 0)) / 86400000);
+      staleItems.push(`listed ${days <= 0 ? 'today' : days === 1 ? '1 day ago' : `${days} days ago`}`);
+    }
     if (l.lastPriceChange) {
       const diff = l.lastPriceChangeDiff;
       const sign = diff > 0 ? '+' : '';
       staleItems.push(`chg ${relTime(l.lastPriceChange)} (${sign}$${Math.abs(diff).toLocaleString()})`);
     }
-    if (l.status === 'delisted' && l.lastSeen) staleItems.push(`last seen ${relTime(l.lastSeen)}`);
     const staleHtml = staleItems.length
       ? `<div class="card-stale">${staleItems.map(s => `<span class="card-stale-item">${s}</span>`).join('<span class="card-stale-item">·</span>')}</div>`
       : '';
 
-    return `<div class="listing-card${isDelist ? ' opacity-50' : ''}" id="card-${l.listingId}" onclick="focusListing('${l.listingId}')" style="${isDelist ? 'opacity:.55;' : ''}">
+    const thumb = l.photo
+      ? `<div class="card-thumb"><img src="${photoUrl(l.photo)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('card-thumb-empty');this.parentElement.textContent='⌂'"></div>`
+      : `<div class="card-thumb card-thumb-empty">${isBTO ? '▲' : '⌂'}</div>`;
+
+    return `<div class="listing-card${l.listingId === activeCardId ? ' active' : ''}" id="card-${l.listingId}" onclick="focusListing('${l.listingId}')" style="${isDelist ? 'opacity:.55;' : ''}">
+      ${thumb}
+      <div class="card-body">
       <div class="card-top">
         <div class="card-price" style="color:${priceColor2}">${priceStr}</div>
         <div class="card-badges">
           ${prevBadge}
-          <div class="type-badge ${typeClass}">${isDelist ? '✕ ' : ''}${l.type}</div>
+          ${typeBadge}
         </div>
       </div>
       <div class="card-addr" title="${l.address}">${l.address}</div>
       <div class="card-meta">${meta.map(m => `<span>${m}</span>`).join('')}</div>
       ${staleHtml}
+      </div>
     </div>`;
   }).join('');
 }
@@ -1161,6 +1193,7 @@ function focusListing(id) {
 }
 
 function highlightCard(id) {
+  activeCardId = id;
   document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
   const card = document.getElementById('card-' + id);
   if (card) { card.classList.add('active'); card.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
@@ -1218,8 +1251,10 @@ async function confirmClearDB() {
   await dbClear('listings');
   await dbClear('snapshots');
   allListings = [];
+  currentFiltered = [];
   listingCluster.clearLayers();
   activeMarkers = [];
+  document.getElementById('list-count').textContent = '';
   document.getElementById('listing-list').innerHTML = '<div class="empty-state">Database cleared.</div>';
   document.getElementById('changes-list').innerHTML = '<div class="empty-state">No changes detected yet.</div>';
   document.getElementById('history-list').innerHTML = '<div class="empty-state">No import history yet.</div>';
