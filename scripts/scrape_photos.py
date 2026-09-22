@@ -74,7 +74,29 @@ def filter_images(image_paths: list[str]) -> tuple[list[str], list[str]]:
     return photos, floor_plans
 
 
-def download_images(session: requests.Session, paths: list[str], output_dir: str) -> None:
+def is_complete_image(path: str) -> bool:
+    """Cheap corruption check without decoding: verify the file is non-empty and
+    ends with its format's end-of-file marker. Catches truncated downloads (the
+    common failure) without pulling in Pillow.
+    """
+    try:
+        if os.path.getsize(path) == 0:
+            return False
+        ext = os.path.splitext(path)[1].lower()
+        with open(path, "rb") as f:
+            if ext in (".jpg", ".jpeg"):
+                f.seek(-2, os.SEEK_END)
+                return f.read(2) == b"\xff\xd9"  # JPEG End-Of-Image marker
+            if ext == ".png":
+                f.seek(-8, os.SEEK_END)
+                return f.read(8) == b"\x49\x45\x4e\x44\xae\x42\x60\x82"  # PNG IEND chunk
+    except OSError:
+        return False
+    # Unknown/other extension: non-empty is the best we can cheaply assert.
+    return True
+
+
+def download_images(session: requests.Session, paths: list[str], output_dir: str, retries: int = 2) -> None:
     os.makedirs(output_dir, exist_ok=True)
     for path in paths:
         url = f"{CDN_BASE}/{path}"
@@ -82,23 +104,38 @@ def download_images(session: requests.Session, paths: list[str], output_dir: str
         dest = os.path.join(output_dir, filename)
 
         print(f"Downloading {filename} ...", end=" ", flush=True)
-        resp = session.get(
-            url,
-            stream=True,
-            timeout=30,
-            headers={"Referer": f"{SITE_BASE}/"},
-        )
-        resp.raise_for_status()
+        for attempt in range(retries + 1):
+            resp = session.get(
+                url,
+                stream=True,
+                timeout=30,
+                headers={"Referer": f"{SITE_BASE}/"},
+            )
+            resp.raise_for_status()
 
-        with open(dest, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
+            written = 0
+            with open(dest, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+                    written += len(chunk)
 
-        print(f"saved ({os.path.getsize(dest):,} bytes)")
+            expected = resp.headers.get("Content-Length")
+            short = expected is not None and written != int(expected)
+            if not short and is_complete_image(dest):
+                print(f"saved ({os.path.getsize(dest):,} bytes)")
+                break
+
+            reason = "size mismatch" if short else "truncated/corrupt"
+            if attempt < retries:
+                print(f"{reason}, retrying ({attempt + 1}/{retries}) ...", end=" ", flush=True)
+                time.sleep(1)
+            else:
+                print(f"{reason}; gave up after {retries} retr{'y' if retries == 1 else 'ies'}")
         time.sleep(1)
 
 
-def load_listing_ids(hdb_json_path: str, flat_type: str = None) -> list[str]:
+def load_listing_ids(hdb_json_path: str, flat_types: list[str] = None) -> list[str]:
+    wanted = set(flat_types) if flat_types else None
     with open(hdb_json_path) as f:
         data = json.load(f)
     ids = []
@@ -109,7 +146,7 @@ def load_listing_ids(hdb_json_path: str, flat_type: str = None) -> list[str]:
         desc = props.get("description", [{}])[0]
         if not desc.get("listingId"):
             continue
-        if flat_type and desc.get("flatType") != flat_type:
+        if wanted and desc.get("flatType") not in wanted:
             continue
         ids.append(desc["listingId"])
     return ids
@@ -136,10 +173,15 @@ def scrape_single(session: requests.Session, listing_id: int, skip_existing: boo
     if skip_existing and os.path.isdir(output_dir):
         existing = [f for f in os.listdir(output_dir)
                     if os.path.isfile(os.path.join(output_dir, f))]
-        if len(existing) == expected:
+        corrupt = [f for f in existing
+                   if not is_complete_image(os.path.join(output_dir, f))]
+        if len(existing) == expected and not corrupt:
             print(f"  skipped ({expected} file(s) already present)")
             return False
-        print(f"  count mismatch (have {len(existing)}, expect {expected}); re-downloading")
+        if corrupt:
+            print(f"  {len(corrupt)} corrupt file(s) detected; re-downloading")
+        else:
+            print(f"  count mismatch (have {len(existing)}, expect {expected}); re-downloading")
         for f in existing:
             os.remove(os.path.join(output_dir, f))
 
@@ -149,9 +191,9 @@ def scrape_single(session: requests.Session, listing_id: int, skip_existing: boo
     return True
 
 
-def scrape_all(session: requests.Session, hdb_json_path: str, skip_existing: bool, flat_type: str) -> None:
-    listing_ids = load_listing_ids(hdb_json_path, flat_type=flat_type)
-    label = f"{flat_type} resale" if flat_type else "resale"
+def scrape_all(session: requests.Session, hdb_json_path: str, skip_existing: bool, flat_types: list[str]) -> None:
+    listing_ids = load_listing_ids(hdb_json_path, flat_types=flat_types)
+    label = f"{', '.join(flat_types)} resale" if flat_types else "resale"
     print(f"Found {len(listing_ids)} {label} listings in {hdb_json_path}\n")
 
     processed = 0
@@ -179,16 +221,28 @@ def main() -> None:
         help="Scrape a single listing ID instead of all listings",
     )
     parser.add_argument(
+        "--3room",
+        dest="three_room",
+        action="store_true",
+        help="Include 3-Room resale listings",
+    )
+    parser.add_argument(
         "--4room",
         dest="four_room",
         action="store_true",
-        help="Only scrape 4-Room resale listings",
+        help="Include 4-Room resale listings",
     )
     parser.add_argument(
         "--5room",
         dest="five_room",
         action="store_true",
-        help="Only scrape 5-Room resale listings",
+        help="Include 5-Room resale listings",
+    )
+    parser.add_argument(
+        "--345room",
+        dest="all_345",
+        action="store_true",
+        help="Include 3-, 4- and 5-Room resale listings (shorthand for all three)",
     )
     parser.add_argument(
         "--hdb-json",
@@ -209,8 +263,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.four_room and args.five_room:
-        parser.error("--4room and --5room are mutually exclusive")
+    flat_types = []
+    if args.three_room or args.all_345:
+        flat_types.append("3-Room")
+    if args.four_room or args.all_345:
+        flat_types.append("4-Room")
+    if args.five_room or args.all_345:
+        flat_types.append("5-Room")
+    flat_types = flat_types or None
 
     session = requests.Session()
     session.headers.update({"User-Agent": BROWSER_UA})
@@ -218,8 +278,7 @@ def main() -> None:
     if args.listing_id is not None:
         scrape_single(session, args.listing_id, skip_existing=args.skip_existing)
     else:
-        flat_type = "4-Room" if args.four_room else "5-Room" if args.five_room else None
-        scrape_all(session, args.hdb_json, args.skip_existing, flat_type=flat_type)
+        scrape_all(session, args.hdb_json, args.skip_existing, flat_types=flat_types)
 
 
 if __name__ == "__main__":

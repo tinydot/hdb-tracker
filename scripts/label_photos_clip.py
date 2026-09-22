@@ -113,17 +113,18 @@ def load_flat_types(hdb_json_path: Path) -> dict[int, str]:
     return flat_types
 
 
-def iter_photos(data_dir: Path, only_listing: int | None, flat_type: str | None = None, hdb_json_path: Path | None = None):
+def iter_photos(data_dir: Path, only_listing: int | None, flat_types: list[str] | None = None, hdb_json_path: Path | None = None):
     if not data_dir.is_dir():
         return
-    flat_types = load_flat_types(hdb_json_path) if flat_type else {}
+    wanted = set(flat_types) if flat_types else None
+    listing_flat_types = load_flat_types(hdb_json_path) if wanted else {}
     for listing_dir in sorted(data_dir.iterdir()):
         if not listing_dir.is_dir() or not listing_dir.name.isdigit():
             continue
         listing_id = int(listing_dir.name)
         if only_listing is not None and listing_id != only_listing:
             continue
-        if flat_type and flat_types.get(listing_id) != flat_type:
+        if wanted and listing_flat_types.get(listing_id) not in wanted:
             continue
         for img in sorted(listing_dir.iterdir()):
             if not img.is_file():
@@ -202,8 +203,10 @@ def main() -> int:
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--listing-id", type=int, default=None, help="Label only this listing")
-    parser.add_argument("--4room", dest="four_room", action="store_true", help="Only label 4-Room resale listings")
-    parser.add_argument("--5room", dest="five_room", action="store_true", help="Only label 5-Room resale listings")
+    parser.add_argument("--3room", dest="three_room", action="store_true", help="Include 3-Room resale listings")
+    parser.add_argument("--4room", dest="four_room", action="store_true", help="Include 4-Room resale listings")
+    parser.add_argument("--5room", dest="five_room", action="store_true", help="Include 5-Room resale listings")
+    parser.add_argument("--345room", dest="all_345", action="store_true", help="Include 3-, 4- and 5-Room resale listings (shorthand for all three)")
     parser.add_argument("--hdb-json", type=Path, default=DEFAULT_HDB_JSON, help="Path to hdb.json (default: data/hdb.json)")
     parser.add_argument("--limit", type=int, default=None, help="Stop after N photos")
     parser.add_argument("--relabel", action="store_true", help="Re-label photos already in the DB")
@@ -212,9 +215,14 @@ def main() -> int:
     parser.add_argument("--threshold", type=float, default=0.15, help="Sigmoid prob above which extra rooms are included beyond the top match")
     args = parser.parse_args()
 
-    if args.four_room and args.five_room:
-        parser.error("--4room and --5room are mutually exclusive")
-    flat_type = "4-Room" if args.four_room else "5-Room" if args.five_room else None
+    flat_types = []
+    if args.three_room or args.all_345:
+        flat_types.append("3-Room")
+    if args.four_room or args.all_345:
+        flat_types.append("4-Room")
+    if args.five_room or args.all_345:
+        flat_types.append("5-Room")
+    flat_types = flat_types or None
 
     conn = open_db(args.db)
 
@@ -227,7 +235,7 @@ def main() -> int:
     # Resolve the full work list up front so floor plans are handled without
     # loading the model, and model photos can be batched.
     pending: list[tuple[int, Path]] = []
-    for listing_id, img_path in iter_photos(args.data_dir, args.listing_id, flat_type=flat_type, hdb_json_path=args.hdb_json):
+    for listing_id, img_path in iter_photos(args.data_dir, args.listing_id, flat_types=flat_types, hdb_json_path=args.hdb_json):
         if args.limit is not None and labeled + len(pending) >= args.limit:
             break
         total += 1
