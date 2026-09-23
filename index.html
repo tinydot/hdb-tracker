@@ -1185,9 +1185,9 @@ function switchTab(el) {
 function focusListing(id) {
   const l = allListings.find(x => x.listingId === id);
   if (!l || !l._marker) return;
-  switchTab(document.querySelector('.tab[data-tab="map"]'));
   listingCluster.zoomToShowLayer(l._marker, () => {
     l._marker.openPopup();
+    highlightCard(id); // list was re-cut to the new viewport; scroll the card back into view
   });
   highlightCard(id);
 }
