@@ -433,6 +433,8 @@ let allListings = [];      // currently displayed (with change metadata)
 let activeMarkers = [];
 let currentFiltered = [];  // output of applyFilters, before the map-viewport cut
 let activeCardId = null;
+let listingPopup = null;   // popup opened by a sidebar row click, kept off the cluster
+let popupListingId = null;
 let filters = { type: 'Resale', maxPrice: 1500000, flats: new Set(['4-Room', '5-Room']), minLease: 65, regions: new Set(['NORTH REGION']), status: 'all', hideDelisted: true };
 let currentTab = 'map';
 
@@ -948,6 +950,10 @@ function makePopup(l) {
 // Re-cut the list to the visible map area whenever the view changes.
 map.on('moveend resize', () => renderList(currentFiltered));
 
+// Once the row's popup is dismissed (or replaced by a pin's own popup), clicking the
+// same row again should re-open it.
+map.on('popupclose', e => { if (e.popup === listingPopup) popupListingId = null; });
+
 function renderList(filtered) {
   const el = document.getElementById('listing-list');
   const countEl = document.getElementById('list-count');
@@ -1185,11 +1191,27 @@ function switchTab(el) {
 function focusListing(id) {
   const l = allListings.find(x => x.listingId === id);
   if (!l || !l._marker) return;
-  listingCluster.zoomToShowLayer(l._marker, () => {
-    l._marker.openPopup();
-    highlightCard(id); // list was re-cut to the new viewport; scroll the card back into view
-  });
   highlightCard(id);
+  showListingPopup(l); // immediately — don't make the user wait out the zoom animation
+  listingCluster.zoomToShowLayer(l._marker, () => {
+    showListingPopup(l); // in case the pin left a cluster and the popup went with it
+    highlightCard(id);   // list was re-cut to the new viewport; scroll the card back into view
+    // The popup auto-panned against the pre-zoom view, so it can sit half off the map now.
+    if (listingPopup && map.hasLayer(listingPopup)) listingPopup._adjustPan();
+  });
+}
+
+// Opening the marker's own popup doesn't survive a row click: markercluster takes the
+// marker off the map every time the view re-clusters, and Leaflet closes that marker's
+// bound popup along with it — so the popup opened, then vanished mid-zoom. Open a popup
+// the cluster doesn't own instead, anchored at the pin's coordinates.
+function showListingPopup(l) {
+  if (popupListingId === l.listingId && listingPopup && map.hasLayer(listingPopup)) return;
+  popupListingId = l.listingId;
+  listingPopup = L.popup({ maxWidth: 290, offset: [0, -34] })
+    .setLatLng(l._marker.getLatLng())
+    .setContent(makePopup(l));
+  map.openPopup(listingPopup);
 }
 
 function highlightCard(id) {
