@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>HDB Tracker</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;600&display=swap" rel="stylesheet">
@@ -165,19 +165,79 @@ input[type=range]{flex:1;accent-color:var(--resale);}
 .sg-val{font-family:'DM Mono',monospace;font-size:18px;font-weight:500;}
 .sg-label{font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;margin-top:2px;}
 .modal-close{width:100%;padding:8px;border-radius:6px;background:var(--accent);color:#000;border:none;font-weight:700;font-size:13px;cursor:pointer;font-family:'DM Sans',sans-serif;}
+/* ── MOBILE ── */
+.hmenu-btn,.filter-toggle,.legend-toggle,.mobile-nav{display:none;}
+@media (max-width:760px){
+  body{height:100vh;height:100dvh;}
+  header{position:relative;padding:8px 12px;padding-top:max(8px,env(safe-area-inset-top));}
+  .hstats{gap:14px;margin-left:auto;}
+  .hstat-secondary{display:none;}
+  .hmenu-btn{display:block;flex:0 0 auto;padding:4px 10px;font-size:18px;line-height:1;background:transparent;color:var(--muted);border:1px solid var(--border);}
+  .header-actions{display:none;position:absolute;top:calc(100% + 4px);right:8px;z-index:3000;flex-direction:column;gap:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:6px;box-shadow:0 8px 24px rgba(0,0,0,.15);}
+  header.menu-open .header-actions{display:flex;}
+  .hbtn{font-size:13px;padding:10px 14px;text-align:left;}
+
+  /* One pane at a time. The map stays laid out behind the list (visibility, not display)
+     so Leaflet keeps its size and the list's in-view cut still works. */
+  .main{position:relative;}
+  .sidebar{position:absolute;inset:0;width:auto;border-right:none;z-index:1;}
+  .map-wrap{position:absolute;inset:0;}
+  body[data-mview="list"] .map-wrap{visibility:hidden;}
+  body[data-mview="map"] .sidebar{visibility:hidden;}
+
+  button{font-size:13px;padding:10px;}
+  .sidebar-top{padding:8px 10px;}
+  .btn-row{margin-top:0;gap:6px;}
+  .filter-toggle{display:block;flex:2;min-width:0;overflow:hidden;text-overflow:ellipsis;text-align:left;}
+  .filter-bar{display:none;padding:10px 12px;gap:12px;}
+  .sidebar.filters-open .filter-bar{display:flex;max-height:58vh;overflow-y:auto;}
+  .filter-label{font-size:10px;}
+  .filter-label span[onclick]{font-size:11px!important;padding:2px 0 2px 12px;}
+  .chips{gap:6px;}
+  .chip{padding:7px 12px;font-size:12px;}
+  .range-val{font-size:12px;}
+
+  .list-count{font-size:11px;}
+  .listing-list{padding:8px;padding-bottom:12px;-webkit-overflow-scrolling:touch;}
+  .listing-card{margin-bottom:7px;}
+  .card-thumb{flex-basis:108px;min-height:92px;}
+  .card-body{padding:10px 11px;}
+  .card-price{font-size:15px;}
+  .type-badge,.change-badge{font-size:10px;}
+  .card-addr{font-size:12px;margin-top:4px;}
+  .card-meta span{font-size:11px;}
+  .card-stale-item{font-size:10px;}
+
+  .map-legend{bottom:30px;right:10px;padding:0;max-width:calc(100% - 20px);}
+  .leaflet-control-attribution{font-size:9px;}
+  .legend-toggle{display:block;width:100%;background:transparent;color:var(--text);font-size:12px;padding:9px 12px;}
+  .map-legend .legend-body{display:none;padding:0 12px 10px;max-height:55vh;overflow-y:auto;}
+  .map-legend.open .legend-body{display:block;}
+  .layer-btn{padding:8px 10px;font-size:12px;}
+  .layer-hint{font-size:10px;}
+  .leaflet-popup-content{min-width:0;}
+
+  .mobile-nav{display:flex;flex-shrink:0;background:var(--panel);border-top:1px solid var(--border);padding-bottom:env(safe-area-inset-bottom);}
+  .mobile-nav button{background:transparent;border-radius:0;color:var(--muted);padding:12px 8px;font-size:13px;}
+  .mobile-nav button.active{color:var(--accent);box-shadow:inset 0 2px 0 var(--accent);}
+  .mobile-nav button:hover{opacity:1;}
+
+  .toast{white-space:normal;max-width:calc(100vw - 32px);text-align:center;bottom:calc(64px + env(safe-area-inset-bottom));}
+}
 </style>
 </head>
-<body>
+<body data-mview="list">
 
 <header>
   <div class="logo">HDB<span>//</span>TRACKER</div>
   <div class="hstats">
     <div class="hstat"><span class="hstat-val" id="s-resale" style="color:var(--resale)">0</span><span class="hstat-label">Resale</span></div>
-    <div class="hstat"><span class="hstat-val" id="s-bto" style="color:var(--bto)">0</span><span class="hstat-label">BTO</span></div>
+    <div class="hstat hstat-secondary"><span class="hstat-val" id="s-bto" style="color:var(--bto)">0</span><span class="hstat-label">BTO</span></div>
     <div class="hstat"><span class="hstat-val" id="s-med">—</span><span class="hstat-label">Median</span></div>
-    <div class="hstat"><span class="hstat-val" id="s-low">—</span><span class="hstat-label">Lowest</span></div>
+    <div class="hstat hstat-secondary"><span class="hstat-val" id="s-low">—</span><span class="hstat-label">Lowest</span></div>
   </div>
-  <div class="header-actions">
+  <button class="hmenu-btn" onclick="toggleHeaderMenu(event)" aria-label="More actions">⋯</button>
+  <div class="header-actions" onclick="closeHeaderMenu()">
     <button class="hbtn" onclick="exportDB()">⬇ Export DB</button>
     <button class="hbtn" onclick="triggerImportDB()">⬆ Import DB</button>
     <button class="hbtn danger" onclick="confirmClearDB()">✕ Clear DB</button>
@@ -190,6 +250,7 @@ input[type=range]{flex:1;accent-color:var(--resale);}
     <div class="sidebar-top">
       <div class="btn-row">
         <button id="load-latest-btn" class="btn-primary" onclick="fetchLatest()" title="Load data/hdb.json committed by the scheduled GitHub Action">Load Data</button>
+        <button id="filter-toggle" class="btn-ghost filter-toggle" onclick="toggleFilters()">Filters</button>
       </div>
     </div>
 
@@ -258,6 +319,8 @@ input[type=range]{flex:1;accent-color:var(--resale);}
   <div class="map-wrap" id="tab-map">
     <div id="map"></div>
     <div class="map-legend">
+      <button class="legend-toggle" onclick="this.parentElement.classList.toggle('open')">Legend &amp; layers</button>
+      <div class="legend-body">
       <div class="legend-title">Price (quartiles)</div>
       <div id="legend-price-rows">
         <div class="legend-row"><div class="legend-dot" style="background:#00b37a"></div> Q1 lowest</div>
@@ -281,6 +344,7 @@ input[type=range]{flex:1;accent-color:var(--resale);}
         <div class="layer-btn" id="lt-school" onclick="toggleLayer('school')">🏫 Schools</div>
       </div>
       <div class="layer-hint">Click any overlay icon to toggle its 1 km / 2 km rings</div>
+      </div>
     </div>
   </div>
 
@@ -298,6 +362,11 @@ input[type=range]{flex:1;accent-color:var(--resale);}
     <div id="history-list"><div class="empty-state">No import history yet.</div></div>
   </div>
 </div>
+
+<nav class="mobile-nav">
+  <button id="mnav-list" class="active" onclick="setMobileView('list')">☰ List <span id="mnav-count"></span></button>
+  <button id="mnav-map" onclick="setMobileView('map')">◎ Map</button>
+</nav>
 
 <!-- Import summary modal -->
 <div class="modal-overlay" id="summary-modal">
@@ -779,7 +848,27 @@ function applyFilters() {
   renderMarkers(filtered);
   renderList(filtered);
   updateStats(filtered);
+  updateFilterSummary();
   saveFilters();
+}
+
+// Mobile: the filter panel is collapsed behind a button that summarises what's active.
+function updateFilterSummary() {
+  const parts = [];
+  if (filters.type !== 'all') parts.push(filters.type);
+  if (filters.flats.size) parts.push([...filters.flats].map(f => f.replace('-Room', 'R')).join('/'));
+  if (filters.maxPrice < 1500000) parts.push('≤$' + Math.round(filters.maxPrice / 1000) + 'k');
+  if (filters.minLease > 0) parts.push('≥' + filters.minLease + 'y');
+  if (filters.regions.size) parts.push([...filters.regions].map(r => r.replace(' REGION', '').toLowerCase()).join('/'));
+  if (filters.status !== 'all') parts.push(filters.status);
+  const open = document.querySelector('.sidebar').classList.contains('filters-open');
+  document.getElementById('filter-toggle').textContent =
+    (open ? '▴ ' : '▾ ') + 'Filters' + (parts.length ? ': ' + parts.join(' · ') : '');
+}
+
+function toggleFilters() {
+  document.querySelector('.sidebar').classList.toggle('filters-open');
+  updateFilterSummary();
 }
 
 function buildFlatChips() {
@@ -960,6 +1049,7 @@ function renderList(filtered) {
   const bounds = map.getBounds();
   const data = filtered.filter(l => bounds.contains([l.lat, l.lng]));
   countEl.textContent = filtered.length ? `${data.length} in view · ${filtered.length} total` : '';
+  document.getElementById('mnav-count').textContent = filtered.length ? `(${data.length})` : '';
   if (!filtered.length) { el.innerHTML = '<div class="empty-state">No listings match current filters.</div>'; return; }
   if (!data.length) { el.innerHTML = '<div class="empty-state">No listings in the visible map area.<br>Zoom out or pan to see more.</div>'; return; }
 
@@ -1008,7 +1098,7 @@ function renderList(filtered) {
       ? `<div class="card-thumb"><img src="${photoUrl(l.photo)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('card-thumb-empty');this.parentElement.textContent='⌂'"></div>`
       : `<div class="card-thumb card-thumb-empty">${isBTO ? '▲' : '⌂'}</div>`;
 
-    return `<div class="listing-card${l.listingId === activeCardId ? ' active' : ''}" id="card-${l.listingId}" onclick="focusListing('${l.listingId}')" style="${isDelist ? 'opacity:.55;' : ''}">
+    return `<div class="listing-card${l.listingId === activeCardId ? ' active' : ''}" id="card-${l.listingId}" onclick="openListing('${l.listingId}')" style="${isDelist ? 'opacity:.55;' : ''}">
       ${thumb}
       <div class="card-body">
       <div class="card-top">
@@ -1214,6 +1304,12 @@ function showListingPopup(l) {
   map.openPopup(listingPopup);
 }
 
+// Card tap. On a phone the list covers the map, so flip to the map first.
+function openListing(id) {
+  if (isMobile()) setMobileView('map');
+  focusListing(id);
+}
+
 function highlightCard(id) {
   activeCardId = id;
   document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
@@ -1309,6 +1405,27 @@ function closeModal() {
 // ═══════════════════════════════════════════════════════
 // MISC
 // ═══════════════════════════════════════════════════════
+const mobileMQ = window.matchMedia('(max-width: 760px)');
+function isMobile() { return mobileMQ.matches; }
+
+function setMobileView(v) {
+  document.body.dataset.mview = v;
+  document.getElementById('mnav-list').classList.toggle('active', v === 'list');
+  document.getElementById('mnav-map').classList.toggle('active', v === 'map');
+  if (v === 'list' && activeCardId) highlightCard(activeCardId);
+}
+
+function toggleHeaderMenu(e) {
+  e.stopPropagation();
+  document.querySelector('header').classList.toggle('menu-open');
+}
+function closeHeaderMenu() {
+  document.querySelector('header').classList.remove('menu-open');
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('.header-actions')) closeHeaderMenu();
+});
+
 function toast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg;
