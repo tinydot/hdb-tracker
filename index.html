@@ -1037,7 +1037,7 @@ function makePopup(l) {
 // RENDER SIDEBAR LIST
 // ═══════════════════════════════════════════════════════
 // Re-cut the list to the visible map area whenever the view changes.
-map.on('moveend resize', () => renderList(currentFiltered));
+map.on('moveend resize', () => { if (!isMobile()) renderList(currentFiltered); });
 
 // Once the row's popup is dismissed (or replaced by a pin's own popup), clicking the
 // same row again should re-open it.
@@ -1046,9 +1046,12 @@ map.on('popupclose', e => { if (e.popup === listingPopup) popupListingId = null;
 function renderList(filtered) {
   const el = document.getElementById('listing-list');
   const countEl = document.getElementById('list-count');
+  // On a phone the list is its own screen, so it shows every filtered listing rather
+  // than only those inside the (hidden) map viewport.
+  const mobile = isMobile();
   const bounds = map.getBounds();
-  const data = filtered.filter(l => bounds.contains([l.lat, l.lng]));
-  countEl.textContent = filtered.length ? `${data.length} in view · ${filtered.length} total` : '';
+  const data = mobile ? filtered : filtered.filter(l => bounds.contains([l.lat, l.lng]));
+  countEl.textContent = !filtered.length ? '' : mobile ? `${filtered.length} listings` : `${data.length} in view · ${filtered.length} total`;
   document.getElementById('mnav-count').textContent = filtered.length ? `(${data.length})` : '';
   if (!filtered.length) { el.innerHTML = '<div class="empty-state">No listings match current filters.</div>'; return; }
   if (!data.length) { el.innerHTML = '<div class="empty-state">No listings in the visible map area.<br>Zoom out or pan to see more.</div>'; return; }
@@ -1407,6 +1410,7 @@ function closeModal() {
 // ═══════════════════════════════════════════════════════
 const mobileMQ = window.matchMedia('(max-width: 760px)');
 function isMobile() { return mobileMQ.matches; }
+mobileMQ.addEventListener('change', () => renderList(currentFiltered));
 
 function setMobileView(v) {
   document.body.dataset.mview = v;
