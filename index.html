@@ -1081,13 +1081,8 @@ function renderList(filtered) {
       : isBTO ? `<div class="type-badge ${typeClass}">BTO</div>` : '';
 
     const staleItems = [];
-    // HDB's listing date (YYYY-MM-DD, local); fall back to when we first saw it (BTO has none).
-    const listedAt = l.creationDate && l.creationDate !== '—' ? new Date(l.creationDate + 'T00:00') : l.firstSeen && new Date(l.firstSeen);
-    if (listedAt) {
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      const days = Math.round((today - new Date(listedAt).setHours(0, 0, 0, 0)) / 86400000);
-      staleItems.push(`listed ${days <= 0 ? 'today' : days === 1 ? '1 day ago' : `${days} days ago`}`);
-    }
+    const listed = listedInfo(l);
+    if (listed) staleItems.push(`listed ${listed.ago}`);
     if (l.lastPriceChange) {
       const diff = l.lastPriceChangeDiff;
       const sign = diff > 0 ? '+' : '';
@@ -1137,10 +1132,20 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('en-SG', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+// HDB's listing date (YYYY-MM-DD, local); fall back to when we first saw it (BTO has none).
+function listedInfo(l) {
+  const listedAt = l.creationDate && l.creationDate !== '—' ? new Date(l.creationDate + 'T00:00') : l.firstSeen && new Date(l.firstSeen);
+  if (!listedAt) return null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const days = Math.round((today - new Date(listedAt).setHours(0, 0, 0, 0)) / 86400000);
+  return { date: listedAt, ago: days <= 0 ? 'today' : days === 1 ? '1 day ago' : `${days} days ago` };
+}
+
 function makeStalenessHtml(l) {
   const rows = [];
-  if (l.firstSeen) {
-    rows.push(`<div class="popup-staleness-row"><span>First seen</span><span class="ps-val">${fmtDate(l.firstSeen)} · ${relTime(l.firstSeen)}</span></div>`);
+  const listed = listedInfo(l);
+  if (listed) {
+    rows.push(`<div class="popup-staleness-row"><span>Listed</span><span class="ps-val">${fmtDate(listed.date)} · ${listed.ago}</span></div>`);
   }
   if (l.lastPriceChange) {
     const diff = l.lastPriceChangeDiff;
