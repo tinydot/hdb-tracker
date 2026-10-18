@@ -1019,7 +1019,6 @@ function makePopup(l) {
       <div class="popup-grid" style="margin-top:7px;">
         <div class="popup-item"><div class="popup-item-label">Floor Area</div><div class="popup-item-val">${l.floorArea}</div></div>
         <div class="popup-item"><div class="popup-item-label">Lease Left</div><div class="popup-item-val">${l.remainingLease}</div></div>
-        <div class="popup-item"><div class="popup-item-label">Listed</div><div class="popup-item-val">${l.creationDate || '—'}</div></div>
         <div class="popup-item"><div class="popup-item-label">Status</div><div class="popup-item-val">${l.status === 'delisted' ? '⚠ Delisted' : 'Active'}</div></div>
       </div>
       ${stalenessHtml}
